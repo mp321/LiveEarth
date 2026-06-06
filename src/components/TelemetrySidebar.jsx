@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { LAYER_BY_ID } from '../state/layerRegistry';
+import { flightRouteUrl } from '../services/globalStreams';
 import { useAppContext } from '../state/AppContext';
 
 // -----------------------------------------------------------------------------
@@ -42,6 +44,38 @@ export default function TelemetrySidebar() {
   const { selectedEntity, selectEntity } = useAppContext();
   const open = Boolean(selectedEntity);
   const layer = selectedEntity ? LAYER_BY_ID[selectedEntity.layer] : null;
+
+  // Origin/destination isn't broadcast over ADS-B, so resolve it lazily per click
+  // from hexdb.io (CORS-enabled) only when a flight is selected — keeps the bulk
+  // flight poll light instead of one route request per aircraft.
+  const isFlight = selectedEntity?.layer === 'flights';
+  const callsign = selectedEntity?.meta?.callsign?.trim();
+  const [route, setRoute] = useState(null); // null | 'loading' | 'unknown' | {origin,destination}
+
+  useEffect(() => {
+    if (!isFlight || !callsign || callsign === 'UNKNOWN') {
+      setRoute(null);
+      return;
+    }
+    let cancelled = false;
+    setRoute('loading');
+    fetch(flightRouteUrl(callsign))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const raw = typeof data?.route === 'string' ? data.route : '';
+        const parts = raw.split('-').filter(Boolean);
+        if (parts.length >= 2) {
+          setRoute({ origin: parts[0], destination: parts[parts.length - 1] });
+        } else {
+          setRoute('unknown');
+        }
+      })
+      .catch(() => !cancelled && setRoute('unknown'));
+    return () => {
+      cancelled = true;
+    };
+  }, [isFlight, callsign]);
 
   return (
     <aside
@@ -95,6 +129,31 @@ export default function TelemetrySidebar() {
                 </div>
               </div>
             </section>
+
+            {/* Route (flights only — lazily resolved on selection) */}
+            {isFlight && (
+              <section className="mb-4 rounded-xl bg-white/[0.03] p-3">
+                <p className="mb-2 text-[11px] uppercase tracking-wider text-slate-400">
+                  Route (Origin → Destination)
+                </p>
+                {route === 'loading' && (
+                  <p className="text-sm text-slate-400">Looking up route…</p>
+                )}
+                {route === 'unknown' && (
+                  <p className="text-sm text-slate-400">No route data</p>
+                )}
+                {route && route.origin && (
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="font-mono text-slate-100">{route.origin}</span>
+                    <span className="text-slate-500">→</span>
+                    <span className="font-mono text-slate-100">
+                      {route.destination}
+                    </span>
+                  </div>
+                )}
+                {route === null && <p className="text-sm text-slate-500">—</p>}
+              </section>
+            )}
 
             {/* Operational metrics — generic over entity.meta */}
             <section>

@@ -80,20 +80,27 @@ export default function GlobeView() {
     };
   }, [activeLayers]);
 
-  // Flatten the active layers' entities, then split by how the registry says to
-  // project each layer: `points` layers (e.g. flights) render as heading-oriented
-  // airplane glyphs in the html layer; `markers` layers (e.g. buoys) render as
-  // flat dots in the points layer.
+  // Flatten the active layers' entities, then route each to its render channel
+  // by the registry `type` (one channel per type): aircraft -> airplane glyphs,
+  // points -> dots lifted into orbit, markers -> surface dots, rings -> quakes.
   const allEntities = useMemo(
     () => Object.values(layerData).flat(),
     [layerData]
   );
-  const markerEntities = useMemo(
-    () => allEntities.filter((d) => LAYER_BY_ID[d.layer]?.type !== 'points'),
+  const aircraftEntities = useMemo(
+    () => allEntities.filter((d) => LAYER_BY_ID[d.layer]?.type === 'aircraft'),
     [allEntities]
   );
-  const flightEntities = useMemo(
-    () => allEntities.filter((d) => LAYER_BY_ID[d.layer]?.type === 'points'),
+  const pointEntities = useMemo(
+    () =>
+      allEntities.filter((d) => {
+        const t = LAYER_BY_ID[d.layer]?.type;
+        return t === 'points' || t === 'markers';
+      }),
+    [allEntities]
+  );
+  const ringEntities = useMemo(
+    () => allEntities.filter((d) => LAYER_BY_ID[d.layer]?.type === 'rings'),
     [allEntities]
   );
 
@@ -102,10 +109,28 @@ export default function GlobeView() {
     []
   );
 
-  // Dots sit flat on the surface; airplane glyphs lift a touch so airborne
-  // traffic reads as "above" it.
+  // Surface dots sit just off the ground; satellites carry an altitude_km that we
+  // convert to globe radii so they orbit visibly above Earth.
   const MARKER_ALTITUDE = 0.01;
   const FLIGHT_ALTITUDE = 0.06;
+  const EARTH_RADIUS_KM = 6371;
+  const pointAltitude = useCallback(
+    (d) =>
+      Number.isFinite(d.altitude_km)
+        ? d.altitude_km / EARTH_RADIUS_KM
+        : MARKER_ALTITUDE,
+    []
+  );
+
+  // Earthquake rings scale with magnitude and run warm -> hot by intensity.
+  const ringMaxRadius = useCallback(
+    (d) => Math.max(Number(d.meta?.magnitude) || 0, 1) * 2,
+    []
+  );
+  const ringColor = useCallback((d) => {
+    const m = Number(d.meta?.magnitude) || 0;
+    return m >= 5 ? '#ef4444' : m >= 4 ? '#f97316' : m >= 2 ? '#f59e0b' : '#fbbf24';
+  }, []);
 
   const handleClick = useCallback(
     (point) => selectEntity(point),
@@ -167,16 +192,23 @@ export default function GlobeView() {
         backgroundImageUrl={BACKGROUND_IMAGE}
         atmosphereColor="#3a93d6"
         atmosphereAltitude={0.18}
-        pointsData={markerEntities}
+        pointsData={pointEntities}
         pointLat={(d) => d.lat}
         pointLng={(d) => d.lng}
         pointColor={colorFor}
-        pointAltitude={MARKER_ALTITUDE}
+        pointAltitude={pointAltitude}
         pointRadius={0.22}
         pointResolution={6}
         pointLabel={(d) => `${d.label} — ${LAYER_BY_ID[d.layer]?.label ?? ''}`}
         onPointClick={handleClick}
-        htmlElementsData={flightEntities}
+        ringsData={ringEntities}
+        ringLat={(d) => d.lat}
+        ringLng={(d) => d.lng}
+        ringColor={ringColor}
+        ringMaxRadius={ringMaxRadius}
+        ringPropagationSpeed={2}
+        ringRepeatPeriod={900}
+        htmlElementsData={aircraftEntities}
         htmlLat={(d) => d.lat}
         htmlLng={(d) => d.lng}
         htmlAltitude={FLIGHT_ALTITUDE}
