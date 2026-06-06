@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #000;
+  color: #e2e8f0;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Reusable glass-morphism surface used by the floating overlays. */
+@layer components {
+  .glass {
+    @apply bg-panel backdrop-blur-md border border-white/10 shadow-2xl;
+  }
+}

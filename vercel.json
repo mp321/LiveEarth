@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/proxy/ndbc",
+      "destination": "https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt"
+    },
+    { "source": "/(.*)", "destination": "/" }
+  ]
+}
