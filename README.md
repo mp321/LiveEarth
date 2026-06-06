@@ -1,7 +1,7 @@
-# MP GlobeTrot — 3D Global Data Dashboard
+# MP_LiveEarth — 3D Global Data Dashboard
 
-A pure, high-performance, **100% client-side** 3D globe for visualizing live open
-data streams. Built with **React + Vite + Tailwind CSS + react-globe.gl** and
+MP_LiveEarth is a pure, high-performance, **100% client-side** 3D globe for
+visualizing live open data streams. Built with **React + Vite + Tailwind CSS + react-globe.gl** and
 designed to deploy free on **Vercel** — no backend, no server, no API keys.
 
 The architecture is **registry-driven**: every data layer is declared once in a

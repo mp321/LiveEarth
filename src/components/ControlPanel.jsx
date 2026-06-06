@@ -63,7 +63,7 @@ export default function ControlPanel() {
         <header className="mb-3 flex items-center justify-between">
           <div>
             <h1 className="text-base font-semibold tracking-tight text-white">
-              GlobeTrot
+              MP_LiveEarth
             </h1>
             <p className="text-[11px] uppercase tracking-widest text-accent/80">
               Global Data Dashboard
