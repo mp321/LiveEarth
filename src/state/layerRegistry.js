@@ -11,6 +11,8 @@
 //   particles  animated flow field (wind)
 //
 // Fields: id, label, type, defaultActive, color, description, optional note.
+// sourceUrl / sourceLabel power the "More from source" drill-down link the
+// ControlPanel renders under each toggle's expandable details.
 
 export const LAYER_REGISTRY = [
   {
@@ -20,6 +22,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#e2e8f0',
     description: "Today's VIIRS true-color imagery from NASA GIBS.",
+    sourceUrl: 'https://worldview.earthdata.nasa.gov/',
+    sourceLabel: 'NASA Worldview',
   },
   {
     id: 'radar',
@@ -28,6 +32,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#22d3ee',
     description: 'Animated rain and snow radar from RainViewer.',
+    sourceUrl: 'https://www.rainviewer.com/map.html',
+    sourceLabel: 'RainViewer map',
   },
   {
     id: 'wind',
@@ -36,6 +42,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#67e8f9',
     description: 'Animated wind flow from the NOAA GFS forecast model.',
+    sourceUrl: 'https://earth.nullschool.net/',
+    sourceLabel: 'earth.nullschool.net',
   },
   {
     id: 'sst',
@@ -44,6 +52,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#fb7185',
     description: 'Daily GHRSST MUR ocean-temperature analysis (NASA/JPL).',
+    sourceUrl: 'https://worldview.earthdata.nasa.gov/',
+    sourceLabel: 'NASA Worldview',
   },
   {
     id: 'flights',
@@ -52,6 +62,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#38bdf8',
     description: 'Real-time aircraft positions via the airplanes.live API.',
+    sourceUrl: 'https://globe.airplanes.live/',
+    sourceLabel: 'airplanes.live globe',
   },
   {
     id: 'airquality',
@@ -60,6 +72,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#a3e635',
     description: 'Ground-station particulate readings from OpenAQ.',
+    sourceUrl: 'https://explore.openaq.org/',
+    sourceLabel: 'OpenAQ Explorer',
   },
   {
     id: 'earthquakes',
@@ -68,6 +82,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#ef4444',
     description: 'Seismic activity over the past 24 hours from USGS.',
+    sourceUrl: 'https://earthquake.usgs.gov/earthquakes/map/',
+    sourceLabel: 'USGS earthquake map',
   },
   {
     id: 'eonet',
@@ -76,6 +92,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#fb923c',
     description: 'Live tracking of severe storms, wildfires, and volcanoes.',
+    sourceUrl: 'https://eonet.gsfc.nasa.gov/',
+    sourceLabel: 'NASA EONET',
   },
   {
     id: 'buoys',
@@ -84,6 +102,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#fbbf24',
     description: 'Live ocean observation stations from the NOAA NDBC catalog.',
+    sourceUrl: 'https://www.ndbc.noaa.gov/',
+    sourceLabel: 'NOAA NDBC',
   },
   {
     id: 'satellites',
@@ -93,6 +113,8 @@ export const LAYER_REGISTRY = [
     color: '#a78bfa',
     description: 'Live orbital positions calculated from CelesTrak TLEs.',
     note: 'May be intermittent — CelesTrak rate-limits TLE requests.',
+    sourceUrl: 'https://celestrak.org/',
+    sourceLabel: 'CelesTrak',
   },
 ];
 

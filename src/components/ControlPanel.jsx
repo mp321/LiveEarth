@@ -33,20 +33,38 @@ function BaseImagerySelect() {
 // adding a layer to the registry surfaces it here automatically.
 // -----------------------------------------------------------------------------
 
+// Format the live RainViewer radar frame for the expanded radar details: local
+// clock time plus how far it sits from now (observed past vs predicted nowcast).
+function radarFrameSummary(status) {
+  if (!status?.time) return null;
+  const at = new Date(status.time * 1000);
+  const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const deltaMin = Math.round((status.time * 1000 - Date.now()) / 60000);
+  const rel =
+    deltaMin === 0 ? 'now' : deltaMin < 0 ? `${-deltaMin} min ago` : `+${deltaMin} min`;
+  return { clock, rel, kind: status.kind };
+}
+
 function LayerToggle({ layer }) {
-  const { isLayerActive, toggleLayer } = useAppContext();
+  const { isLayerActive, toggleLayer, radarStatus } = useAppContext();
   const active = isLayerActive(layer.id);
+  const [expanded, setExpanded] = useState(false);
+
+  const radar =
+    layer.id === 'radar' && active ? radarFrameSummary(radarStatus) : null;
 
   return (
-    <button
-      type="button"
-      onClick={() => toggleLayer(layer.id)}
-      className={`group w-full text-left rounded-xl border px-3 py-3 transition-all duration-200
+    <div
+      className={`rounded-xl border transition-all duration-200
         ${active
           ? 'border-white/30 bg-white/10'
           : 'border-white/5 bg-white/[0.02] hover:bg-white/[0.06]'}`}
     >
-      <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => toggleLayer(layer.id)}
+        className="group flex w-full items-center gap-3 px-3 pt-3 pb-2 text-left"
+      >
         <span
           className="h-2.5 w-2.5 shrink-0 rounded-full transition-all"
           style={{
@@ -78,8 +96,66 @@ function LayerToggle({ layer }) {
               ${active ? 'translate-x-4' : 'translate-x-0.5'}`}
           />
         </span>
+      </button>
+
+      {/* Expandable details: full (untruncated) description, the live radar frame
+          time, and a drill-down link to the provider's own page. */}
+      <div className="px-3 pb-2 pl-8">
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          aria-expanded={expanded}
+          className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500 transition-colors hover:text-slate-300"
+        >
+          Details
+          <svg
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          >
+            <path d="M6 8l4 4 4-4" />
+          </svg>
+        </button>
+
+        {expanded && (
+          <div className="mt-1.5 space-y-1.5">
+            <p className="text-[11px] leading-snug text-slate-300">
+              {layer.description}
+            </p>
+            {radar && (
+              <p className="text-[11px] text-slate-300">
+                <span className="text-slate-500">Frame</span>{' '}
+                <span className="font-mono text-slate-100">{radar.clock}</span>{' '}
+                <span
+                  className={`rounded px-1 py-0.5 text-[9px] uppercase tracking-wider ${
+                    radar.kind === 'nowcast'
+                      ? 'bg-cyan-400/15 text-cyan-200'
+                      : 'bg-white/10 text-slate-300'
+                  }`}
+                >
+                  {radar.kind === 'nowcast' ? 'nowcast' : 'past'}
+                </span>{' '}
+                <span className="text-slate-500">({radar.rel})</span>
+              </p>
+            )}
+            {layer.sourceUrl && (
+              <a
+                href={layer.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] text-accent/90 underline-offset-2 hover:underline"
+              >
+                More from source: {layer.sourceLabel ?? 'open'} ↗
+              </a>
+            )}
+          </div>
+        )}
       </div>
-    </button>
+    </div>
   );
 }
 

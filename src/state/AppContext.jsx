@@ -34,6 +34,9 @@ export function AppProvider({ children }) {
   const [activeLayers, setActiveLayers] = useState(initialActiveLayers);
   const [selectedEntity, setSelectedEntity] = useState(null);
   const [baseLayer, setBaseLayer] = useState('esri'); // base imagery key
+  // Current RainViewer radar frame, published by MapView's animation timer so the
+  // ControlPanel can show what moment is on screen: { time, kind, index, total }.
+  const [radarStatus, setRadarStatus] = useState(null);
 
   const toggleLayer = useCallback((layerId) => {
     setActiveLayers((prev) => {
@@ -120,6 +123,8 @@ export function AppProvider({ children }) {
       selectedRoute,
       baseLayer,
       setBaseLayer,
+      radarStatus,
+      setRadarStatus,
     }),
     [
       activeLayers,
@@ -129,6 +134,7 @@ export function AppProvider({ children }) {
       selectEntity,
       selectedRoute,
       baseLayer,
+      radarStatus,
     ]
   );
 

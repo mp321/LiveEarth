@@ -92,10 +92,18 @@ export async function fetchRadarFrames() {
     if (!res.ok) throw new Error(`RainViewer responded ${res.status}`);
     const data = await res.json();
     const radar = data.radar || {};
-    const frames = [...(radar.past || []), ...(radar.nowcast || [])];
+    const past = radar.past || [];
+    const nowcast = radar.nowcast || [];
+    // Tag each frame so callers can tell observed past frames from the predicted
+    // nowcast and label "now" (the last past frame) in the UI.
+    const frames = [
+      ...past.map((f) => ({ ...f, kind: 'past' })),
+      ...nowcast.map((f) => ({ ...f, kind: 'nowcast' })),
+    ];
     // Served through the same-origin proxy; color 4 = Universal Blue, 256px.
     return frames.map((f) => ({
       time: f.time,
+      kind: f.kind,
       template: `/proxy/rainviewer${f.path}/256/{z}/{x}/{y}/4/1_1.png`,
     }));
   } catch (err) {

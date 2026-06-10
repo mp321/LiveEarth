@@ -60,7 +60,8 @@ function makePlaneIcon(color) {
 }
 
 export default function MapView() {
-  const { activeLayers, baseLayer, selectEntity, selectedRoute } = useAppContext();
+  const { activeLayers, baseLayer, selectEntity, selectedRoute, setRadarStatus } =
+    useAppContext();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const readyRef = useRef(false);
@@ -290,13 +291,26 @@ export default function MapView() {
     const frames = await fetchRadarFrames();
     if (!frames.length || !map.getStyle()) return;
     const sid = srcId('radar');
-    map.addSource(sid, { type: 'raster', tiles: [frames[0].template], tileSize: 256, attribution: 'RainViewer' });
+    // Publish the on-screen frame so the ControlPanel can show its timestamp.
+    const publish = (idx) =>
+      setRadarStatus({
+        time: frames[idx].time,
+        kind: frames[idx].kind,
+        index: idx,
+        total: frames.length,
+      });
+    // Start on the present moment — the newest past frame — rather than the
+    // oldest (up to ~2h stale); then animate forward into the nowcast and wrap.
+    const lastPast = frames.map((f) => f.kind).lastIndexOf('past');
+    let i = lastPast >= 0 ? lastPast : 0;
+    map.addSource(sid, { type: 'raster', tiles: [frames[i].template], tileSize: 256, attribution: 'RainViewer' });
     map.addLayer({ id: lyrId('radar'), type: 'raster', source: sid, paint: { 'raster-opacity': 0.7 } }, firstAbove());
-    let i = 0;
+    publish(i);
     pollers.current.radar = setInterval(() => {
       i = (i + 1) % frames.length;
       const s = map.getSource(sid);
       if (s) s.setTiles([frames[i].template]);
+      publish(i);
     }, RADAR_FRAME_MS);
   }
 
@@ -306,6 +320,7 @@ export default function MapView() {
     if (layer.id === 'radar') {
       clearInterval(pollers.current.radar);
       delete pollers.current.radar;
+      setRadarStatus(null);
     }
     if (map.getLayer(lyrId(layer.id))) map.removeLayer(lyrId(layer.id));
     if (map.getSource(srcId(layer.id))) map.removeSource(srcId(layer.id));

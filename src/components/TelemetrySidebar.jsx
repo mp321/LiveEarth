@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { LAYER_BY_ID } from '../state/layerRegistry';
 import { useAppContext } from '../state/AppContext';
+import { sourceLinkForEntity } from '../services/sourceLinks';
 
 // -----------------------------------------------------------------------------
 // TelemetrySidebar
@@ -66,6 +68,30 @@ export default function TelemetrySidebar() {
   const route =
     selectedRoute && selectedRoute.callsign === callsign ? selectedRoute : null;
 
+  // Drill-down link to this specific entity's page on its source (USGS event,
+  // N2YO track, airplanes.live hex, …); null for layers without a per-item page.
+  const sourceLink = sourceLinkForEntity(selectedEntity);
+
+  // Click-to-copy coordinates, with a brief confirmation.
+  const lat = selectedEntity?.lat;
+  const lng = selectedEntity?.lng;
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+  const coordText = hasCoords ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : null;
+  const [copied, setCopied] = useState(false);
+  const copyCoords = async () => {
+    if (!coordText) return;
+    try {
+      await navigator.clipboard?.writeText(coordText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable (non-secure context) — ignore */
+    }
+  };
+
+  const originCode = route?.origin?.iata || route?.origin?.icao || '—';
+  const destCode = route?.destination?.iata || route?.destination?.icao || '—';
+
   return (
     <aside
       className={`pointer-events-auto fixed right-0 top-0 z-20 h-full w-80 max-w-[85vw] transform
@@ -98,25 +124,70 @@ export default function TelemetrySidebar() {
 
         {selectedEntity && (
           <div className="flex-1 overflow-y-auto pr-1">
-            {/* Coordinate block */}
+            {/* Drill-down to this entity's page on its data source */}
+            {sourceLink && (
+              <a
+                href={sourceLink.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mb-3 inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-white/10"
+              >
+                View on {sourceLink.label} ↗
+              </a>
+            )}
+
+            {/* Coordinate block — click to copy; links search the point */}
             <section className="mb-4 rounded-xl bg-white/[0.03] p-3">
-              <p className="mb-2 text-[11px] uppercase tracking-wider text-slate-400">
-                Coordinates
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[11px] uppercase tracking-wider text-slate-400">
+                  Coordinates
+                </p>
+                {hasCoords && (
+                  <span className="text-[10px] text-slate-500">
+                    {copied ? 'Copied ✓' : 'Click to copy'}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={copyCoords}
+                disabled={!hasCoords}
+                title={coordText ? `Copy ${coordText}` : undefined}
+                className="grid w-full grid-cols-2 gap-2 rounded-lg p-1 text-left text-sm transition-colors hover:bg-white/[0.05] disabled:cursor-default disabled:hover:bg-transparent"
+              >
                 <div>
                   <p className="text-[10px] text-slate-500">LAT</p>
                   <p className="font-mono text-slate-100">
-                    {selectedEntity.lat?.toFixed(4)}°
+                    {hasCoords ? `${lat.toFixed(4)}°` : '—'}
                   </p>
                 </div>
                 <div>
                   <p className="text-[10px] text-slate-500">LNG</p>
                   <p className="font-mono text-slate-100">
-                    {selectedEntity.lng?.toFixed(4)}°
+                    {hasCoords ? `${lng.toFixed(4)}°` : '—'}
                   </p>
                 </div>
-              </div>
+              </button>
+              {hasCoords && (
+                <div className="mt-2 flex gap-2">
+                  <a
+                    href={`https://www.google.com/maps?q=${lat},${lng}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-center text-[11px] text-slate-200 transition-colors hover:bg-white/10"
+                  >
+                    Google Maps ↗
+                  </a>
+                  <a
+                    href={`https://www.google.com/search?q=${lat},${lng}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-center text-[11px] text-slate-200 transition-colors hover:bg-white/10"
+                  >
+                    Search ↗
+                  </a>
+                </div>
+              )}
             </section>
 
             {/* Route (flights only — lazily resolved on selection) */}
@@ -132,10 +203,18 @@ export default function TelemetrySidebar() {
                   <p className="text-sm text-slate-400">No route data</p>
                 )}
                 {route?.status === 'ok' && (
-                  <div className="space-y-1.5">
-                    <AirportLine role="Departure" ap={route.origin} />
-                    <div className="pl-0.5 text-slate-600">↓</div>
-                    <AirportLine role="Arrival" ap={route.destination} />
+                  <div className="space-y-2.5">
+                    {/* Prominent origin → destination summary */}
+                    <div className="flex items-center justify-center gap-2 text-base font-semibold text-white">
+                      <span className="font-mono">{originCode}</span>
+                      <span className="text-slate-500">→</span>
+                      <span className="font-mono">{destCode}</span>
+                    </div>
+                    <div className="space-y-1.5 border-t border-white/10 pt-2">
+                      <AirportLine role="From (origin)" ap={route.origin} />
+                      <div className="pl-0.5 text-slate-600">↓</div>
+                      <AirportLine role="To (destination)" ap={route.destination} />
+                    </div>
                   </div>
                 )}
               </section>
