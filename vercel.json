@@ -8,6 +8,10 @@
       "source": "/proxy/ndbc",
       "destination": "https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt"
     },
+    {
+      "source": "/proxy/rainviewer/:path*",
+      "destination": "https://tilecache.rainviewer.com/:path*"
+    },
     { "source": "/(.*)", "destination": "/" }
   ]
 }

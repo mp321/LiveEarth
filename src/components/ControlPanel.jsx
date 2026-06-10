@@ -1,5 +1,29 @@
+import { useState } from 'react';
 import { LAYER_REGISTRY } from '../state/layerRegistry';
+import { BASE_IMAGERY } from '../services/rasterSources';
 import { useAppContext } from '../state/AppContext';
+
+function BaseImagerySelect() {
+  const { baseLayer, setBaseLayer } = useAppContext();
+  return (
+    <label className="mb-3 block">
+      <span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-400">
+        Base imagery
+      </span>
+      <select
+        value={baseLayer}
+        onChange={(e) => setBaseLayer(e.target.value)}
+        className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-accent/60"
+      >
+        {Object.entries(BASE_IMAGERY).map(([key, cfg]) => (
+          <option key={key} value={key} className="bg-slate-900">
+            {cfg.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 // -----------------------------------------------------------------------------
 // ControlPanel
@@ -38,6 +62,11 @@ function LayerToggle({ layer }) {
           <p className="truncate text-[11px] text-slate-400">
             {layer.description}
           </p>
+          {layer.note && (
+            <p className="mt-1 text-[10px] leading-snug text-amber-300/80">
+              {layer.note}
+            </p>
+          )}
         </div>
         {/* Pill switch */}
         <span
@@ -56,11 +85,12 @@ function LayerToggle({ layer }) {
 
 export default function ControlPanel() {
   const { activeLayers } = useAppContext();
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
     <aside className="pointer-events-auto fixed left-4 top-4 z-20 w-72 max-w-[80vw]">
       <div className="glass rounded-2xl p-4">
-        <header className="mb-3 flex items-center justify-between">
+        <header className="flex items-center justify-between">
           <div>
             <h1 className="text-base font-semibold tracking-tight text-white">
               MP_LiveEarth
@@ -69,33 +99,67 @@ export default function ControlPanel() {
               Global Data Dashboard
             </p>
           </div>
-          <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium text-slate-300">
-            {activeLayers.size} active
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium text-slate-300">
+              {activeLayers.size} active
+            </span>
+            <button
+              type="button"
+              onClick={() => setCollapsed((c) => !c)}
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
+              title={collapsed ? 'Expand panel' : 'Collapse panel'}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`h-4 w-4 transition-transform duration-300 ${collapsed ? '' : 'rotate-180'}`}
+              >
+                <path d="M6 8l4 4 4-4" />
+              </svg>
+            </button>
+          </div>
         </header>
 
-        <div className="space-y-2">
-          {LAYER_REGISTRY.map((layer) => (
-            <LayerToggle key={layer.id} layer={layer} />
-          ))}
-        </div>
+        <div
+          className={`grid transition-all duration-300 ease-out ${
+            collapsed
+              ? 'grid-rows-[0fr] opacity-0'
+              : 'mt-3 grid-rows-[1fr] opacity-100'
+          }`}
+        >
+          <div className="overflow-hidden">
+            <BaseImagerySelect />
+            <div className="space-y-2">
+              {LAYER_REGISTRY.map((layer) => (
+                <LayerToggle key={layer.id} layer={layer} />
+              ))}
+            </div>
 
-        <footer className="mt-4 border-t border-white/10 pt-3 text-[10px] leading-relaxed text-slate-500">
-          Streams refresh automatically every 30s while active. Click any element
-          on the globe to inspect its telemetry.
-          <span className="mt-1.5 block text-slate-600">
-            Flight data{' '}
-            <a
-              href="https://airplanes.live/"
-              target="_blank"
-              rel="noreferrer"
-              className="underline hover:text-slate-400"
-            >
-              airplanes.live
-            </a>
-            {' · '}buoys NOAA NDBC.
-          </span>
-        </footer>
+            <footer className="mt-4 border-t border-white/10 pt-3 text-[10px] leading-relaxed text-slate-500">
+              Data refreshes automatically while active. Zoom in for higher-
+              resolution imagery; click any element to inspect its telemetry.
+              <span className="mt-1.5 block text-slate-600">
+                Imagery Esri / EOX / NASA GIBS · weather NOAA, RainViewer,
+                WeatherLayers · flights{' '}
+                <a
+                  href="https://airplanes.live/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-slate-400"
+                >
+                  airplanes.live
+                </a>
+                .
+              </span>
+            </footer>
+          </div>
+        </div>
       </div>
     </aside>
   );

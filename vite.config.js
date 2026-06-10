@@ -16,6 +16,13 @@ export default defineConfig({
         rewrite: (p) =>
           p.replace(/^\/proxy\/ndbc/, '/data/latest_obs/latest_obs.txt'),
       },
+      // RainViewer radar tiles same-origin so throttled (429) responses can't
+      // surface as CORS errors during animation.
+      '/proxy/rainviewer': {
+        target: 'https://tilecache.rainviewer.com',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/proxy\/rainviewer/, ''),
+      },
     },
   },
 });

@@ -1,45 +1,65 @@
-// -----------------------------------------------------------------------------
-// The Extensible Layer Registry
-// -----------------------------------------------------------------------------
-// This is the single source of truth for every data layer the dashboard can
-// render. The UI (ControlPanel) and the engine (GlobeView) both iterate over
-// this array — nothing about a layer is hardcoded anywhere else.
+// Single source of truth for every data layer. ControlPanel renders a toggle per
+// entry and MapView projects each by its `type`. Adding a layer means: add an
+// entry here, then a matching fetcher (for data types) or source builder.
 //
-// To add a new open-source layer:
-//   1. Add a profile object below.
-//   2. Add a matching `fetch` function in src/services/globalStreams.js.
-//   3. Register that fetcher in LAYER_FETCHERS (also in globalStreams.js).
+// type -> MapView render channel:
+//   aircraft   heading-rotated plane symbols (flights)
+//   markers    surface circles (buoys, EONET, air quality)
+//   points     circles sized for orbit context (satellites)
+//   rings      magnitude-scaled pulsing circles (earthquakes)
+//   raster     streamed tile imagery (clouds, radar, SST)
+//   particles  animated flow field (wind)
 //
-// Profile fields:
-//   id            - unique key, also used as the activeLayers membership token
-//   label         - human-readable name shown in the ControlPanel
-//   type          - how GlobeView projects the data (one render channel each):
-//                     'aircraft' -> heading-oriented airplane glyphs (flights)
-//                     'points'   -> dots lifted into orbit by altitude_km (satellites)
-//                     'markers'  -> flat dots on the surface (buoys, EONET events)
-//                     'rings'    -> pulsing rings scaled/colored by magnitude
-//                                   (earthquakes)
-//   defaultActive - whether the layer is toggled on at first load
-//   color         - accent color used for the rendered geometry + UI dot
-//   description    - short blurb shown under the toggle
-// -----------------------------------------------------------------------------
+// Fields: id, label, type, defaultActive, color, description, optional note.
 
 export const LAYER_REGISTRY = [
   {
+    id: 'clouds',
+    label: 'Cloud Cover (Near Real-Time)',
+    type: 'raster',
+    defaultActive: false,
+    color: '#e2e8f0',
+    description: "Today's VIIRS true-color imagery from NASA GIBS.",
+  },
+  {
+    id: 'radar',
+    label: 'Precipitation Radar',
+    type: 'raster',
+    defaultActive: false,
+    color: '#22d3ee',
+    description: 'Animated rain and snow radar from RainViewer.',
+  },
+  {
+    id: 'wind',
+    label: 'Global Wind',
+    type: 'particles',
+    defaultActive: false,
+    color: '#67e8f9',
+    description: 'Animated wind flow from the NOAA GFS forecast model.',
+  },
+  {
+    id: 'sst',
+    label: 'Sea Surface Temperature',
+    type: 'raster',
+    defaultActive: false,
+    color: '#fb7185',
+    description: 'Daily GHRSST MUR ocean-temperature analysis (NASA/JPL).',
+  },
+  {
     id: 'flights',
-    label: 'Live ADSB Flights',
+    label: 'Live ADS-B Flights',
     type: 'aircraft',
     defaultActive: false,
     color: '#38bdf8',
     description: 'Real-time aircraft positions via the airplanes.live API.',
   },
   {
-    id: 'buoys',
-    label: 'NOAA Weather Buoys',
+    id: 'airquality',
+    label: 'Air Quality (PM2.5)',
     type: 'markers',
     defaultActive: false,
-    color: '#fbbf24',
-    description: 'Live ocean observation stations from the NOAA NDBC catalog.',
+    color: '#a3e635',
+    description: 'Ground-station particulate readings from OpenAQ.',
   },
   {
     id: 'earthquakes',
@@ -47,7 +67,7 @@ export const LAYER_REGISTRY = [
     type: 'rings',
     defaultActive: false,
     color: '#ef4444',
-    description: 'Real-time seismic activity over the past 24 hours provided by USGS.',
+    description: 'Seismic activity over the past 24 hours from USGS.',
   },
   {
     id: 'eonet',
@@ -58,17 +78,30 @@ export const LAYER_REGISTRY = [
     description: 'Live tracking of severe storms, wildfires, and volcanoes.',
   },
   {
+    id: 'buoys',
+    label: 'NOAA Weather Buoys',
+    type: 'markers',
+    defaultActive: false,
+    color: '#fbbf24',
+    description: 'Live ocean observation stations from the NOAA NDBC catalog.',
+  },
+  {
     id: 'satellites',
-    label: 'Active Satellites (Low Earth Orbit)',
+    label: 'Active Satellites (LEO)',
     type: 'points',
     defaultActive: false,
     color: '#a78bfa',
     description: 'Live orbital positions calculated from CelesTrak TLEs.',
+    note: 'May be intermittent — CelesTrak rate-limits TLE requests.',
   },
 ];
 
-// Convenience lookup so consumers can resolve a profile from an id in O(1).
 export const LAYER_BY_ID = LAYER_REGISTRY.reduce((acc, layer) => {
   acc[layer.id] = layer;
   return acc;
 }, {});
+
+// Render-channel groupings used by MapView.
+export const RASTER_TYPES = new Set(['raster']);
+export const PARTICLE_TYPES = new Set(['particles']);
+export const VECTOR_TYPES = new Set(['aircraft', 'markers', 'points', 'rings']);

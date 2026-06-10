@@ -1,5 +1,32 @@
 import * as satellite from 'satellite.js';
 
+// Convert any fetcher's normalized entities into a MapLibre-ready GeoJSON
+// FeatureCollection. Styling-relevant fields are promoted to top-level
+// properties (expressions can only read those); the full entity is serialized
+// under `_entity` so a click can rebuild it for the telemetry sidebar.
+export function entitiesToGeoJSON(entities) {
+  return {
+    type: 'FeatureCollection',
+    features: (entities || [])
+      .filter((e) => Number.isFinite(e.lat) && Number.isFinite(e.lng))
+      .map((e) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [e.lng, e.lat] },
+        properties: {
+          id: e.id,
+          label: e.label,
+          layer: e.layer,
+          kind: e.kind ?? '',
+          heading: Number.isFinite(e.meta?.heading_deg) ? e.meta.heading_deg : 0,
+          magnitude: Number(e.meta?.magnitude) || 0,
+          value: Number(e.meta?.pm25 ?? e.meta?.value) || 0,
+          altitude_km: Number.isFinite(e.altitude_km) ? e.altitude_km : 0,
+          _entity: JSON.stringify(e),
+        },
+      })),
+  };
+}
+
 // -----------------------------------------------------------------------------
 // Data Streams
 // -----------------------------------------------------------------------------
@@ -46,7 +73,7 @@ const NDBC_URL = '/proxy/ndbc';
 // a link in the ControlPanel footer.
 //
 // RATE LIMIT: ~1 request per second (invalid requests trigger temporary IP
-// bans). Keep UI polling at 10-15s MINIMUM (GlobeView refreshes every 30s).
+// bans). Keep UI polling at 10-15s MINIMUM (MapView refreshes every 30s).
 const FLIGHTS_URL = 'https://api.airplanes.live/v2/point/39.8/-98.6/250';
 
 // Per-callsign route lookup (origin/destination). ADS-B doesn't broadcast route,
@@ -54,6 +81,39 @@ const FLIGHTS_URL = 'https://api.airplanes.live/v2/point/39.8/-98.6/250';
 // keeping the bulk flight poll light instead of one request per aircraft.
 export const flightRouteUrl = (callsign) =>
   `https://hexdb.io/api/v1/route/icao/${encodeURIComponent(callsign)}`;
+
+// Airport details (name, country, coordinates) by ICAO code, also from hexdb
+// (CORS-enabled). Used to label a selected flight's departure/arrival and to
+// draw the route arc on the globe.
+export const airportInfoUrl = (icao) =>
+  `https://hexdb.io/api/v1/airport/icao/${encodeURIComponent(icao)}`;
+
+/**
+ * Resolve an airport's name and coordinates from its ICAO code (best-effort —
+ * resolves to null if hexdb has no record or the request fails).
+ *
+ * @returns {Promise<{icao:string,iata:?string,name:?string,region:?string,lat:?number,lng:?number}|null>}
+ */
+export async function fetchAirport(icao) {
+  if (!icao) return null;
+  try {
+    const res = await fetch(airportInfoUrl(icao));
+    if (!res.ok) return null;
+    const d = await res.json();
+    const lat = Number(d?.latitude);
+    const lng = Number(d?.longitude);
+    return {
+      icao: String(d?.icao || icao).toUpperCase(),
+      iata: d?.iata || null,
+      name: d?.airport || null,
+      region: d?.region_name || d?.country_code || null,
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 // USGS earthquakes — GeoJSON summary of the past 24h (all magnitudes).
 // CORS-enabled, fetched directly.
@@ -71,6 +131,31 @@ const EONET_URL = 'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=2
 const CELESTRAK_URL =
   'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle';
 const SAT_LIMIT = 500;
+
+// ADS-B emitter "category" (wake-turbulence class) code -> readable label.
+const WAKE_CATEGORY = {
+  A1: 'Light',
+  A2: 'Small',
+  A3: 'Large',
+  A4: 'High-vortex large',
+  A5: 'Heavy',
+  A6: 'High performance',
+  A7: 'Rotorcraft',
+  B1: 'Glider / sailplane',
+  B2: 'Lighter-than-air',
+  B4: 'Ultralight',
+  B6: 'UAV / drone',
+  B7: 'Space / trans-atmospheric',
+  C1: 'Surface — emergency vehicle',
+  C2: 'Surface — service vehicle',
+};
+
+// Transponder squawks that signal an emergency, decoded for the sidebar.
+const SQUAWK_ALERTS = {
+  7500: 'Unlawful interference (7500)',
+  7600: 'Radio failure (7600)',
+  7700: 'General emergency (7700)',
+};
 
 /**
  * Live aircraft positions from airplanes.live (free, keyless, no auth).
@@ -105,24 +190,44 @@ export async function fetchLiveFlights() {
         const altFt = typeof a.alt_baro === 'number' ? a.alt_baro : null;
         const gsKt = toNum(a.gs); // ground speed is reported in knots
         const callsign = (a.flight || a.hex || 'UNKNOWN').trim();
+        // Classify so MapView can color the glyph: military (dbFlags bit 0),
+        // light general-aviation (wake category A1), else commercial.
+        const military = (Number(a.dbFlags) & 1) === 1;
+        const kind = military ? 'military' : a.category === 'A1' ? 'ga' : 'commercial';
+        // Vertical rate (ft/min): barometric preferred, geometric as fallback.
+        const vRateFpm = toNum(a.baro_rate) ?? toNum(a.geom_rate);
+        const squawk = a.squawk ? String(a.squawk) : null;
+        const emergency =
+          (a.emergency && a.emergency !== 'none' ? a.emergency : null) ||
+          (squawk ? SQUAWK_ALERTS[Number(squawk)] : null) ||
+          null;
         return {
           id: a.hex,
           lat: a.lat,
           lng: a.lon,
           label: callsign,
           layer: 'flights',
+          kind, // read by MapView to color the glyph (kept out of the sidebar)
           meta: {
             callsign,
             aircraft: a.desc || '—', // e.g. "BOEING 737 MAX 9"
             type: a.t || '—', // ICAO type code, e.g. "B39M"
+            class: military
+              ? 'Military'
+              : a.category === 'A1'
+                ? 'General Aviation'
+                : 'Commercial',
+            category: WAKE_CATEGORY[a.category] || '—',
             operator: a.ownOp || '—',
             registration: a.r || '—',
-            squawk: a.squawk || '—',
+            squawk: squawk || '—',
             altitude_ft: altFt,
             altitude_m: altFt != null ? Math.round(altFt * FEET_TO_M) : null,
             ground_speed_kt: gsKt,
             ground_speed_mph: gsKt != null ? Math.round(gsKt * 1.15078) : null,
+            vertical_rate_fpm: vRateFpm,
             heading_deg: toNum(a.track),
+            emergency: emergency || '—',
             status: a.alt_baro === 'ground' ? 'On Ground' : 'Airborne',
           },
         };
@@ -299,7 +404,7 @@ export async function fetchLiveEonet() {
  * Live satellite positions from CelesTrak active-satellite TLEs, propagated to
  * "now" with satellite.js. CORS-enabled. The feed has 15k+ objects, so we cap at
  * SAT_LIMIT to keep the renderer responsive. Altitude (km) is set on the entity
- * so GlobeView can lift the points off the surface into orbit.
+ * so MapView can lift the points off the surface into orbit.
  *
  * @returns {Promise<Array>} normalized satellite entities
  */
@@ -307,6 +412,13 @@ export async function fetchLiveEonet() {
 // stay valid for hours, so we fetch the element set at most once per hour and
 // re-propagate the cached TLEs to "now" on each refresh — positions still update
 // every cycle without re-hitting CelesTrak (which would risk a 403 IP block).
+//
+// TODO (rate-limit workarounds): the satellites layer goes empty whenever
+// CelesTrak returns a 403 / "GP data has not updated since your last successful
+// request" body. Explore: (1) persist the last good element set to localStorage
+// so reloads don't re-fetch; (2) proxy through a cached serverless function so
+// all clients share one upstream hit; (3) fall back to an alternate source
+// (e.g. Space-Track) when CelesTrak blocks. Guard against caching the error body.
 let tleCache = { text: null, fetchedAt: 0 };
 const TLE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -357,12 +469,14 @@ export async function fetchLiveSatellites() {
           lng,
           label: name,
           layer: 'satellites',
-          altitude_km: Math.round(gd.height), // read by GlobeView for orbit lift
+          altitude_km: Math.round(gd.height), // read by MapView for orbit lift
           meta: {
             name,
             norad_id: String(satrec.satnum),
             altitude_km: Math.round(gd.height),
+            altitude_mi: Number((gd.height * 0.621371).toFixed(2)), // km -> miles (0.00)
             velocity_kms: speed != null ? Number(speed.toFixed(2)) : null,
+            velocity_mph: speed != null ? Math.round(speed * 2236.936) : null, // km/s -> mph
             status: 'In orbit',
           },
         });
@@ -377,15 +491,63 @@ export async function fetchLiveSatellites() {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Registry of fetchers keyed by layer id. GlobeView reads this to resolve which
-// stream to call for each active layer — add new layers here in lockstep with
-// layerRegistry.js.
-// -----------------------------------------------------------------------------
+// Ground-level air quality (PM2.5) from OpenAQ v3. The v3 API requires a free
+// key, read from VITE_OPENAQ_KEY; without it the layer resolves to [] so the
+// rest of the globe is unaffected. pm25 is parameter id 2.
+const OPENAQ_URL = 'https://api.openaq.org/v3/parameters/2/latest?limit=1000';
+const OPENAQ_KEY = import.meta.env?.VITE_OPENAQ_KEY;
+
+function aqiBand(pm25) {
+  if (pm25 == null) return 'Unknown';
+  if (pm25 <= 12) return 'Good';
+  if (pm25 <= 35.4) return 'Moderate';
+  if (pm25 <= 55.4) return 'Unhealthy (sensitive)';
+  if (pm25 <= 150.4) return 'Unhealthy';
+  if (pm25 <= 250.4) return 'Very unhealthy';
+  return 'Hazardous';
+}
+
+export async function fetchLiveAirQuality() {
+  if (!OPENAQ_KEY) return [];
+  try {
+    const res = await fetch(OPENAQ_URL, { headers: { 'X-API-Key': OPENAQ_KEY } });
+    if (!res.ok) throw new Error(`OpenAQ responded ${res.status}`);
+    const data = await res.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+
+    return results
+      .filter((r) => Number.isFinite(r?.coordinates?.latitude))
+      .slice(0, 2000)
+      .map((r) => {
+        const pm25 = Number(r.value);
+        return {
+          id: `aq-${r.sensorsId ?? r.locationsId}`,
+          lat: r.coordinates.latitude,
+          lng: r.coordinates.longitude,
+          label: `PM2.5 ${Number.isFinite(pm25) ? pm25.toFixed(1) : '—'} µg/m³`,
+          layer: 'airquality',
+          meta: {
+            pm25: Number.isFinite(pm25) ? pm25 : null,
+            air_quality: aqiBand(pm25),
+            location_id: r.locationsId ?? '—',
+            time: r.datetime?.utc ? new Date(r.datetime.utc).toUTCString() : null,
+            status: 'Ground station',
+          },
+        };
+      });
+  } catch (err) {
+    console.warn('[globalStreams] fetchLiveAirQuality failed:', err.message);
+    return [];
+  }
+}
+
+// Fetchers keyed by layer id; MapView resolves the active layers' streams here.
+// Raster and particle layers are sourced elsewhere (rasterSources / windData).
 export const LAYER_FETCHERS = {
   flights: fetchLiveFlights,
   buoys: fetchLiveBuoys,
   earthquakes: fetchLiveEarthquakes,
   eonet: fetchLiveEonet,
   satellites: fetchLiveSatellites,
+  airquality: fetchLiveAirQuality,
 };
