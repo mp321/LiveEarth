@@ -432,7 +432,8 @@ export default function MapView() {
       import('@deck.gl/mapbox'),
       import('weatherlayers-gl'),
     ]);
-    const [{ MapboxOverlay }, { ParticleLayer, ImageType }] = await windLibsRef.current;
+    const [{ MapboxOverlay }, { ParticleLayer, ImageType, ImageInterpolation }] =
+      await windLibsRef.current;
     const wind = await loadWindData();
     // Bail if the layer was toggled off (or the map torn down) while loading.
     if (!mapRef.current || !activeRef.current.has('wind')) return;
@@ -448,10 +449,13 @@ export default function MapView() {
           imageType: ImageType.VECTOR,
           imageUnscale: wind.imageUnscale,
           bounds: wind.bounds,
-          numParticles: 4000,
-          maxAge: 25,
+          // Cubic GPU sampling smooths the budget-constrained 10° grid (see
+          // windData.js) into continuous flow between sample points.
+          imageInterpolation: ImageInterpolation.CUBIC,
+          numParticles: 6000,
+          maxAge: 40,
           speedFactor: 3,
-          width: 2,
+          width: 1.6,
           // Color particles by wind speed (m/s): calm -> gale.
           palette: [
             [0, '#e0f2fe'],
@@ -461,7 +465,7 @@ export default function MapView() {
             [32, '#f472b6'],
             [40, '#ef4444'],
           ],
-          opacity: 0.65,
+          opacity: 0.8,
         }),
       ],
     });

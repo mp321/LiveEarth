@@ -16,6 +16,8 @@ Tailwind CSS, MapLibre GL JS, deck.gl, and WeatherLayers GL.
   everything else works.
 - `npm run build` — production build to `dist/`.
 - `npm run preview` — serve the production build.
+- `npm test` — Vitest unit tests over the pure data-shaping logic (parsers,
+  entity mapping, storm-signal math); no network access required.
 
 Requires Node 18+. Deploys on Vercel (`vercel.json`); dev and the deployed app
 both expose the same `/proxy/*` rewrites for the non-CORS sources, and the

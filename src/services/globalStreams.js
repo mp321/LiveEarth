@@ -248,6 +248,66 @@ export async function fetchLiveFlights() {
 }
 
 /**
+ * Parse the NDBC "latest observations" fixed-width catalog into normalized
+ * buoy entities. Line 0 is the column-name header (#STN LAT LON ...), line 1
+ * units, the rest one station per row with 'MM' marking missing values.
+ * Pure — exported for tests.
+ *
+ * @returns {Array} normalized buoy entities
+ */
+export function parseNdbcLatestObs(text) {
+  const lines = (text || '').split('\n').filter((l) => l.trim().length > 0);
+  if (lines.length < 3) return [];
+
+  // Line 0: column names (#STN LAT LON ...). Line 1: units. Rest: data.
+  const header = lines[0].replace(/^#/, '').trim().split(/\s+/);
+  const col = (name) => header.indexOf(name);
+
+  const idxStn = col('STN');
+  const idxLat = col('LAT');
+  const idxLon = col('LON');
+  const idxWspd = col('WSPD');
+  const idxWvht = col('WVHT');
+  const idxDpd = col('DPD');
+  const idxWtmp = col('WTMP');
+  const idxAtmp = col('ATMP');
+  const idxPres = col('PRES');
+
+  const num = (v) => {
+    const n = Number.parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // Imperialize NDBC's metric readings: °C -> °F, meters -> feet, m/s -> mph.
+  const cToF = (c) => (c == null ? null : c * (9 / 5) + 32);
+  const mToFt = (m) => (m == null ? null : m * 3.28084);
+  const msToMph = (v) => (v == null ? null : v * 2.236936);
+
+  return lines
+    .slice(2)
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => num(parts[idxLat]) != null && num(parts[idxLon]) != null)
+    .slice(0, 800) // cap for render performance
+    .map((parts) => ({
+      id: parts[idxStn],
+      lat: num(parts[idxLat]),
+      lng: num(parts[idxLon]),
+      label: `Buoy ${parts[idxStn]}`,
+      layer: 'buoys',
+      meta: {
+        station: parts[idxStn],
+        wind_speed_mph: idxWspd > -1 ? msToMph(num(parts[idxWspd])) : null,
+        wave_height_ft: idxWvht > -1 ? mToFt(num(parts[idxWvht])) : null,
+        wave_period_s: idxDpd > -1 ? num(parts[idxDpd]) : null,
+        water_temp_f: idxWtmp > -1 ? cToF(num(parts[idxWtmp])) : null,
+        air_temp_f: idxAtmp > -1 ? cToF(num(parts[idxAtmp])) : null,
+        pressure_hpa: idxPres > -1 ? num(parts[idxPres]) : null,
+        status: 'Reporting',
+      },
+    }));
+}
+
+/**
  * Live weather buoy observations from the NOAA NDBC "latest observations"
  * catalog. The catalog is a fixed-width text table; we parse the header row to
  * map columns, then read lat/lon and a few headline metrics per station.
@@ -258,57 +318,7 @@ export async function fetchLiveBuoys() {
   try {
     const res = await fetch(NDBC_URL);
     if (!res.ok) throw new Error(`NDBC responded ${res.status}`);
-
-    const text = await res.text();
-    const lines = text.split('\n').filter((l) => l.trim().length > 0);
-    if (lines.length < 3) return [];
-
-    // Line 0: column names (#STN LAT LON ...). Line 1: units. Rest: data.
-    const header = lines[0].replace(/^#/, '').trim().split(/\s+/);
-    const col = (name) => header.indexOf(name);
-
-    const idxStn = col('STN');
-    const idxLat = col('LAT');
-    const idxLon = col('LON');
-    const idxWspd = col('WSPD');
-    const idxWvht = col('WVHT');
-    const idxDpd = col('DPD');
-    const idxWtmp = col('WTMP');
-    const idxAtmp = col('ATMP');
-    const idxPres = col('PRES');
-
-    const num = (v) => {
-      const n = Number.parseFloat(v);
-      return Number.isFinite(n) ? n : null;
-    };
-
-    // Imperialize NDBC's metric readings: °C -> °F, meters -> feet, m/s -> mph.
-    const cToF = (c) => (c == null ? null : c * (9 / 5) + 32);
-    const mToFt = (m) => (m == null ? null : m * 3.28084);
-    const msToMph = (v) => (v == null ? null : v * 2.236936);
-
-    return lines
-      .slice(2)
-      .map((line) => line.trim().split(/\s+/))
-      .filter((parts) => num(parts[idxLat]) != null && num(parts[idxLon]) != null)
-      .slice(0, 800) // cap for render performance
-      .map((parts) => ({
-        id: parts[idxStn],
-        lat: num(parts[idxLat]),
-        lng: num(parts[idxLon]),
-        label: `Buoy ${parts[idxStn]}`,
-        layer: 'buoys',
-        meta: {
-          station: parts[idxStn],
-          wind_speed_mph: idxWspd > -1 ? msToMph(num(parts[idxWspd])) : null,
-          wave_height_ft: idxWvht > -1 ? mToFt(num(parts[idxWvht])) : null,
-          wave_period_s: idxDpd > -1 ? num(parts[idxDpd]) : null,
-          water_temp_f: idxWtmp > -1 ? cToF(num(parts[idxWtmp])) : null,
-          air_temp_f: idxAtmp > -1 ? cToF(num(parts[idxAtmp])) : null,
-          pressure_hpa: idxPres > -1 ? num(parts[idxPres]) : null,
-          status: 'Reporting',
-        },
-      }));
+    return parseNdbcLatestObs(await res.text());
   } catch (err) {
     console.warn('[globalStreams] fetchLiveBuoys failed:', err.message);
     return [];
@@ -430,8 +440,8 @@ const TLE_STORE_KEY = 'liveearth:tle';
 
 // Upstream error prose or a dev server's SPA-fallback HTML must never be
 // cached as an element set — accept only bodies shaped like a TLE catalog
-// (name line followed by "1 ..." / "2 ..." lines).
-function looksLikeTle(text) {
+// (name line followed by "1 ..." / "2 ..." lines). Exported for tests.
+export function looksLikeTle(text) {
   const lines = (text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
   return lines.length >= 3 && lines[1].startsWith('1 ') && lines[2].startsWith('2 ');
 }
@@ -472,56 +482,65 @@ async function getActiveTle() {
   }
 }
 
+/**
+ * Parse a TLE catalog (3 lines per object: name, line 1, line 2) and propagate
+ * each satellite to `now` with satellite.js. Malformed triples are skipped
+ * rather than failing the catalog. Pure given a fixed `now` — exported for tests.
+ *
+ * @returns {Array} normalized satellite entities (capped at SAT_LIMIT)
+ */
+export function tleToEntities(text, now = new Date()) {
+  const lines = (text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const gmst = satellite.gstime(now);
+  const out = [];
+
+  // TLE format: every 3 lines = [name, line1, line2]. Cap at SAT_LIMIT sats.
+  for (let i = 0; i + 2 < lines.length && out.length < SAT_LIMIT; i += 3) {
+    const name = lines[i].trim();
+    try {
+      const satrec = satellite.twoline2satrec(lines[i + 1], lines[i + 2]);
+      const pv = satellite.propagate(satrec, now);
+      if (!pv?.position) continue;
+
+      const gd = satellite.eciToGeodetic(pv.position, gmst);
+      const lat = satellite.degreesLat(gd.latitude);
+      const lng = satellite.degreesLong(gd.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+      const v = pv.velocity;
+      const speed =
+        v && Number.isFinite(v.x)
+          ? Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+          : null;
+
+      out.push({
+        id: String(satrec.satnum),
+        lat,
+        lng,
+        label: name,
+        layer: 'satellites',
+        altitude_km: Math.round(gd.height), // read by MapView for orbit lift
+        meta: {
+          name,
+          norad_id: String(satrec.satnum),
+          altitude_km: Math.round(gd.height),
+          altitude_mi: Number((gd.height * 0.621371).toFixed(2)), // km -> miles (0.00)
+          velocity_kms: speed != null ? Number(speed.toFixed(2)) : null,
+          velocity_mph: speed != null ? Math.round(speed * 2236.936) : null, // km/s -> mph
+          status: 'In orbit',
+        },
+      });
+    } catch {
+      // Skip malformed TLE triples.
+    }
+  }
+  return out;
+}
+
 export async function fetchLiveSatellites() {
   try {
     const text = await getActiveTle();
-    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-
-    const now = new Date();
-    const gmst = satellite.gstime(now);
-    const out = [];
-
-    // TLE format: every 3 lines = [name, line1, line2]. Cap at SAT_LIMIT sats.
-    for (let i = 0; i + 2 < lines.length && out.length < SAT_LIMIT; i += 3) {
-      const name = lines[i].trim();
-      try {
-        const satrec = satellite.twoline2satrec(lines[i + 1], lines[i + 2]);
-        const pv = satellite.propagate(satrec, now);
-        if (!pv?.position) continue;
-
-        const gd = satellite.eciToGeodetic(pv.position, gmst);
-        const lat = satellite.degreesLat(gd.latitude);
-        const lng = satellite.degreesLong(gd.longitude);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-
-        const v = pv.velocity;
-        const speed =
-          v && Number.isFinite(v.x)
-            ? Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
-            : null;
-
-        out.push({
-          id: String(satrec.satnum),
-          lat,
-          lng,
-          label: name,
-          layer: 'satellites',
-          altitude_km: Math.round(gd.height), // read by MapView for orbit lift
-          meta: {
-            name,
-            norad_id: String(satrec.satnum),
-            altitude_km: Math.round(gd.height),
-            altitude_mi: Number((gd.height * 0.621371).toFixed(2)), // km -> miles (0.00)
-            velocity_kms: speed != null ? Number(speed.toFixed(2)) : null,
-            velocity_mph: speed != null ? Math.round(speed * 2236.936) : null, // km/s -> mph
-            status: 'In orbit',
-          },
-        });
-      } catch {
-        // Skip malformed TLE triples.
-      }
-    }
-    return out;
+    return tleToEntities(text, new Date());
   } catch (err) {
     console.warn('[globalStreams] fetchLiveSatellites failed:', err.message);
     return [];

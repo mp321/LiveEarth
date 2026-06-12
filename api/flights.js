@@ -71,8 +71,9 @@ async function getAccessToken() {
 // One OpenSky state vector (positional array) → readsb-ish aircraft object.
 // Indices: 0 icao24, 1 callsign, 5 longitude, 6 latitude, 7 baro_altitude (m),
 // 8 on_ground, 9 velocity (m/s), 10 true_track, 11 vertical_rate (m/s),
-// 14 squawk, 17 category (with extended=1).
-function toAircraft(s) {
+// 14 squawk, 17 category (with extended=1). Exported for tests; Vercel only
+// invokes the default export.
+export function toAircraft(s) {
   const num = (v) => (Number.isFinite(v) ? v : null);
   const altM = num(s[7]);
   const gsMs = num(s[9]);

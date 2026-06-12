@@ -120,6 +120,25 @@ function fetchOutlook16d(mtn) {
   return promise;
 }
 
+/**
+ * Storm-signal window math over a daily snowfall series (cm): the heaviest
+ * 3-day rolling window starting on day 5 or later (index 4+ — the start of the
+ * low-confidence model-outlook range) whose total is ≥ STORM_WINDOW_CM.
+ * `days` are the matching ISO dates. Returns `{ totalCm, window }` or null.
+ * Pure — exported for tests.
+ */
+export function stormSignalFrom(days, dailyCm) {
+  let signal = null;
+  for (let i = 4; i + 2 < dailyCm.length; i++) {
+    // i = 4 is day 5 — the start of the low-confidence model-outlook range.
+    const totalCm = dailyCm[i] + dailyCm[i + 1] + dailyCm[i + 2];
+    if (totalCm >= STORM_WINDOW_CM && (!signal || totalCm > signal.totalCm)) {
+      signal = { totalCm, window: `${fmtDay(days[i])}–${fmtDay(days[i + 2])}` };
+    }
+  }
+  return signal;
+}
+
 async function fetchOutlook16dUncached(mtn) {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${mtn.lat}&longitude=${mtn.lng}` +
@@ -130,14 +149,7 @@ async function fetchOutlook16dUncached(mtn) {
   if (!Array.isArray(days) || !Array.isArray(cm) || !cm.length) return null;
 
   const daily = cm.map((v) => Number(v) || 0);
-  let signal = null;
-  for (let i = 4; i + 2 < daily.length; i++) {
-    // i = 4 is day 5 — the start of the low-confidence model-outlook range.
-    const totalCm = daily[i] + daily[i + 1] + daily[i + 2];
-    if (totalCm >= STORM_WINDOW_CM && (!signal || totalCm > signal.totalCm)) {
-      signal = { totalCm, window: `${fmtDay(days[i])}–${fmtDay(days[i + 2])}` };
-    }
-  }
+  const signal = stormSignalFrom(days, daily);
   const sumIn = (arr) => arr.reduce((a, b) => a + b, 0) / CM_PER_IN;
   return { outlookIn: sumIn(daily), next7dIn: sumIn(daily.slice(0, 7)), signal };
 }
