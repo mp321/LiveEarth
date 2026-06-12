@@ -257,6 +257,21 @@ export default function MapView() {
       startPulse();
       return;
     }
+    if (layer.id === 'mountains') {
+      // Scale/brighten with `alertLevel` (promoted by entitiesToGeoJSON):
+      // 0 quiet, 1 model-outlook storm signal, 2 official NWS winter alert.
+      map.addLayer({
+        id, source, type: 'circle',
+        paint: {
+          'circle-radius': ['step', ['get', 'alertLevel'], 4.5, 1, 6.5, 2, 9],
+          'circle-color': ['step', ['get', 'alertLevel'], layer.color, 1, '#dbeafe', 2, '#fbbf24'],
+          'circle-opacity': 0.95,
+          'circle-stroke-color': ['step', ['get', 'alertLevel'], '#0b1220', 2, '#fff7ed'],
+          'circle-stroke-width': ['step', ['get', 'alertLevel'], 0.6, 1, 1.2, 2, 1.6],
+        },
+      });
+      return;
+    }
     // markers + points (incl. air quality color ramp)
     map.addLayer({
       id, source, type: 'circle',

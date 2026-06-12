@@ -1,4 +1,5 @@
 import * as satellite from 'satellite.js';
+import { fetchMountainSnow } from './snowData';
 
 // Convert any fetcher's normalized entities into a MapLibre-ready GeoJSON
 // FeatureCollection. Styling-relevant fields are promoted to top-level
@@ -21,6 +22,7 @@ export function entitiesToGeoJSON(entities) {
           magnitude: Number(e.meta?.magnitude) || 0,
           value: Number(e.meta?.pm25 ?? e.meta?.value) || 0,
           altitude_km: Number.isFinite(e.altitude_km) ? e.altitude_km : 0,
+          alertLevel: Number.isFinite(e.alertLevel) ? e.alertLevel : 0,
           _entity: JSON.stringify(e),
         },
       })),
@@ -586,4 +588,5 @@ export const LAYER_FETCHERS = {
   eonet: fetchLiveEonet,
   satellites: fetchLiveSatellites,
   airquality: fetchLiveAirQuality,
+  mountains: fetchMountainSnow,
 };

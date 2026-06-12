@@ -58,6 +58,16 @@ export const LAYER_REGISTRY = [
     sourceLabel: 'NASA Worldview',
   },
   {
+    id: 'mountains',
+    label: 'Snow & Mountains',
+    type: 'markers',
+    defaultActive: false,
+    color: '#93c5fd',
+    description: 'Snow forecast & winter alerts for major US mountains.',
+    sourceUrl: 'https://www.weather.gov/',
+    sourceLabel: 'National Weather Service',
+  },
+  {
     id: 'flights',
     label: 'Live ADS-B Flights',
     type: 'aircraft',

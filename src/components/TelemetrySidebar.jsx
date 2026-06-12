@@ -220,19 +220,49 @@ export default function TelemetrySidebar() {
               </section>
             )}
 
-            {/* Operational metrics — generic over entity.meta */}
+            {/* Operational metrics — generic over entity.meta. Keys starting
+                with `_` are structured extensions (e.g. _links), not metrics. */}
             <section>
               <p className="mb-1 text-[11px] uppercase tracking-wider text-slate-400">
                 Operational Metrics
               </p>
-              {Object.entries(selectedEntity.meta ?? {}).map(([key, value]) => (
-                <MetricRow
-                  key={key}
-                  label={humanize(key)}
-                  value={formatValue(value)}
-                />
-              ))}
+              {Object.entries(selectedEntity.meta ?? {})
+                .filter(([key]) => !key.startsWith('_'))
+                .map(([key, value]) => (
+                  <MetricRow
+                    key={key}
+                    label={humanize(key)}
+                    value={formatValue(value)}
+                  />
+                ))}
             </section>
+
+            {/* Curated link buttons — generic: any layer can put an array of
+                {label, url} in meta._links (mountains use it for cams +
+                forecast pages). */}
+            {Array.isArray(selectedEntity.meta?._links) &&
+              selectedEntity.meta._links.length > 0 && (
+                <section className="mt-4">
+                  <p className="mb-2 text-[11px] uppercase tracking-wider text-slate-400">
+                    Cams & Links
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedEntity.meta._links
+                      .filter((link) => link?.url && link?.label)
+                      .map((link) => (
+                        <a
+                          key={link.url}
+                          href={link.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-white/10"
+                        >
+                          {link.label} ↗
+                        </a>
+                      ))}
+                  </div>
+                </section>
+              )}
           </div>
         )}
 
