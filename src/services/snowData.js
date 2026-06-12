@@ -19,7 +19,12 @@
 import { MOUNTAINS } from '../config/mountains';
 
 const SNOW_TTL_MS = 10 * 60 * 1000;
-let snowCache = { at: 0, entities: null };
+let snowCache = { at: 0, entities: null, alerts: null };
+
+// Guard cache for the alert-only fetch path (AppContext polls every 15 min;
+// this just absorbs accidental double-polls, e.g. a remount).
+const ALERT_TTL_MS = 5 * 60 * 1000;
+let alertCache = { at: 0, alerts: null };
 
 // NWS asks API clients to identify themselves via User-Agent. Browsers that
 // treat the header as immutable silently drop it and send their own — also fine.
@@ -99,8 +104,23 @@ async function fetchNwsSnow7d(mtn) {
  * storm signal: the heaviest 3-day rolling window inside days 5–16 summing
  * ≥ STORM_WINDOW_CM. That far range is model output — callers must label it
  * low confidence.
+ *
+ * Results (including the in-flight promise) are cached per mountain so the
+ * alert poller and the mountains-layer fetch share one upstream call instead
+ * of firing a ~32-request burst at Open-Meteo's rate limiter.
  */
-async function fetchOutlook16d(mtn) {
+const outlookCache = new Map(); // mtn.id -> { at, promise }
+
+function fetchOutlook16d(mtn) {
+  const hit = outlookCache.get(mtn.id);
+  if (hit && Date.now() - hit.at < SNOW_TTL_MS) return hit.promise;
+  const promise = fetchOutlook16dUncached(mtn);
+  outlookCache.set(mtn.id, { at: Date.now(), promise });
+  promise.catch(() => outlookCache.delete(mtn.id)); // don't cache failures
+  return promise;
+}
+
+async function fetchOutlook16dUncached(mtn) {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${mtn.lat}&longitude=${mtn.lng}` +
     `&daily=snowfall_sum&forecast_days=16&elevation=${mtn.elev_m}`;
@@ -165,6 +185,31 @@ async function fetchSnotel(mtn) {
   return { depthIn: latest('SNWD'), sweIn: latest('WTEQ') };
 }
 
+const formatStormSignal = (signal) =>
+  `Potential storm ${signal.window}: ~${Math.round(
+    signal.totalCm / CM_PER_IN
+  )} in (model outlook — low confidence)`;
+
+// Compact alert-drawer item for one peak, or null when there is nothing to
+// flag. `entity` rides along so clicking the alert can populate the sidebar.
+function toAlertItem(mtn, alert, signal, entity) {
+  if (!alert && !signal) return null;
+  return {
+    id: mtn.id,
+    name: mtn.name,
+    lat: mtn.lat,
+    lng: mtn.lng,
+    level: alert ? 2 : 1,
+    headline: alert
+      ? alert
+      : `~${Math.round(signal.totalCm / CM_PER_IN)} in possible (model outlook — low confidence)`,
+    timeframe: alert ? 'Active now' : signal.window,
+    entity,
+  };
+}
+
+const byUrgency = (a, b) => b.level - a.level || a.name.localeCompare(b.name);
+
 /**
  * Snow & mountain entities for every configured peak. Upstreams are fetched in
  * parallel per mountain and each degrades to null independently, so the peaks
@@ -177,7 +222,7 @@ export async function fetchMountainSnow() {
     return snowCache.entities;
   }
   try {
-    const entities = await Promise.all(
+    const results = await Promise.all(
       MOUNTAINS.map(async (mtn) => {
         const muted = Boolean(mtn.excludeFromAlerts);
         const [nws7d, outlook, snotel, alert] = await Promise.all([
@@ -191,7 +236,7 @@ export async function fetchMountainSnow() {
         // promoted to a feature property for data-driven marker paint.
         const alertLevel = alert ? 2 : signal ? 1 : 0;
         const inches = (v) => (v == null ? null : Number(v.toFixed(1)));
-        return {
+        const entity = {
           id: mtn.id,
           lat: mtn.lat,
           lng: mtn.lng,
@@ -203,11 +248,7 @@ export async function fetchMountainSnow() {
             elevation_ft: Math.round(mtn.elev_m * 3.28084),
             next7d_snow_in: inches(nws7d ?? outlook?.next7dIn),
             outlook_16d_in: inches(outlook?.outlookIn),
-            storm_signal: signal
-              ? `Potential storm ${signal.window}: ~${Math.round(
-                  signal.totalCm / CM_PER_IN
-                )} in (model outlook — low confidence)`
-              : '—',
+            storm_signal: signal ? formatStormSignal(signal) : '—',
             active_alert: muted ? 'Muted (northeast US)' : (alert ?? '—'),
             snow_depth_in: snotel?.depthIn ?? null,
             snow_water_equiv_in: snotel?.sweIn ?? null,
@@ -222,12 +263,90 @@ export async function fetchMountainSnow() {
             _links: [...(mtn.cams || []), ...(mtn.links || [])],
           },
         };
+        return { entity, alertItem: muted ? null : toAlertItem(mtn, alert, signal, entity) };
       })
     );
-    snowCache = { at: Date.now(), entities };
-    return entities;
+    snowCache = {
+      at: Date.now(),
+      entities: results.map((r) => r.entity),
+      alerts: results.map((r) => r.alertItem).filter(Boolean).sort(byUrgency),
+    };
+    return snowCache.entities;
   } catch (err) {
     console.warn('[snowData] fetchMountainSnow failed:', err.message);
     return snowCache.entities ?? [];
+  }
+}
+
+// -----------------------------------------------------------------------------
+// In-app alerting (notifications v1)
+// -----------------------------------------------------------------------------
+// AppContext calls this on load and every 15 minutes while the tab is open.
+// When the full snow cache is fresh (the mountains layer is on and polling),
+// alerts derive from it for free; otherwise only the two alert-relevant
+// upstreams are hit per peak (~2 requests × ~16 mountains), batched with
+// Promise.allSettled so one dead upstream can't sink the rest.
+//
+// TODO (notifications v2): Vercel Cron function evaluates the same logic
+// server-side and sends Web Push (service worker) or email (e.g. Resend) to
+// subscribers; requires a small KV store for subscriptions.
+
+/**
+ * Active winter alerts + storm signals across all configured (non-muted)
+ * mountains, sorted official-alerts-first. Degrades to the last good list.
+ *
+ * @returns {Promise<Array<{id,name,lat,lng,level,headline,timeframe,entity}>>}
+ */
+export async function fetchMountainAlerts() {
+  if (snowCache.alerts && Date.now() - snowCache.at < SNOW_TTL_MS) {
+    return snowCache.alerts;
+  }
+  if (alertCache.alerts && Date.now() - alertCache.at < ALERT_TTL_MS) {
+    return alertCache.alerts;
+  }
+  try {
+    const settled = await Promise.allSettled(
+      MOUNTAINS.filter((m) => !m.excludeFromAlerts).map(async (mtn) => {
+        const [alert, outlook] = await Promise.all([
+          fetchWinterAlert(mtn).catch(() => null),
+          fetchOutlook16d(mtn).catch(() => null),
+        ]);
+        const signal = outlook?.signal ?? null;
+        // Minimal sidebar-renderable entity — full telemetry (NWS 7-day,
+        // SNOTEL) arrives once the mountains layer itself fetches.
+        const entity = {
+          id: mtn.id,
+          lat: mtn.lat,
+          lng: mtn.lng,
+          label: mtn.name,
+          layer: 'mountains',
+          alertLevel: alert ? 2 : signal ? 1 : 0,
+          meta: {
+            region: `${mtn.range}, ${mtn.state}`,
+            elevation_ft: Math.round(mtn.elev_m * 3.28084),
+            outlook_16d_in:
+              outlook == null ? null : Number(outlook.outlookIn.toFixed(1)),
+            storm_signal: signal ? formatStormSignal(signal) : '—',
+            active_alert: alert ?? '—',
+            status: alert
+              ? 'Winter alert active'
+              : signal
+                ? 'Storm signal (model outlook)'
+                : 'No winter alerts',
+            _links: [...(mtn.cams || []), ...(mtn.links || [])],
+          },
+        };
+        return toAlertItem(mtn, alert, signal, entity);
+      })
+    );
+    const alerts = settled
+      .filter((s) => s.status === 'fulfilled' && s.value)
+      .map((s) => s.value)
+      .sort(byUrgency);
+    alertCache = { at: Date.now(), alerts };
+    return alerts;
+  } catch (err) {
+    console.warn('[snowData] fetchMountainAlerts failed:', err.message);
+    return alertCache.alerts ?? [];
   }
 }

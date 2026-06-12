@@ -121,5 +121,24 @@ function write() {
 export function publishViewState(partial) {
   view = { ...view, ...partial };
   clearTimeout(timer);
-  timer = setTimeout(write, WRITE_DEBOUNCE_MS);
+  timer = setTimeout(() => {
+    timer = null;
+    write();
+  }, WRITE_DEBOUNCE_MS);
+}
+
+// Flush any pending debounced write when the tab is hidden or closed, so a
+// zoom/pan made just before leaving is never lost to the debounce window.
+function flushViewState() {
+  if (timer == null) return;
+  clearTimeout(timer);
+  timer = null;
+  write();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushViewState);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushViewState();
+  });
 }

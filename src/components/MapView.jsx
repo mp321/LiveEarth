@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
-import { MapboxOverlay } from '@deck.gl/mapbox';
-import { ParticleLayer, ImageType } from 'weatherlayers-gl';
+// deck.gl + weatherlayers-gl are dynamic-imported inside ensureWind() so the
+// wind stack (~MBs) stays out of the initial bundle until first toggle.
 import { greatCircle, point } from '@turf/turf';
 import {
   LAYER_REGISTRY,
@@ -60,6 +60,36 @@ function makePlaneIcon(color) {
   return ctx.getImageData(0, 0, S, S);
 }
 
+// Snow-capped peak icon for the mountains layer, one variant per alert level
+// (0 quiet, 1 model-outlook storm signal, 2 official NWS winter alert).
+const MTN_VARIANTS = {
+  'mtn-0': { fill: '#93c5fd', outline: '#0b1220' },
+  'mtn-1': { fill: '#dbeafe', outline: '#1e40af' },
+  'mtn-2': { fill: '#fbbf24', outline: '#451a03' },
+};
+
+function makeMountainIcon({ fill, outline }) {
+  const S = 48;
+  const c = document.createElement('canvas');
+  c.width = S;
+  c.height = S;
+  const ctx = c.getContext('2d');
+  ctx.lineJoin = 'round';
+  const body = new Path2D('M6 41 L24 8 L42 41 Z');
+  ctx.shadowColor = 'rgba(0,0,0,0.7)';
+  ctx.shadowBlur = 3;
+  ctx.fillStyle = fill;
+  ctx.fill(body);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = 2.5;
+  ctx.stroke(body);
+  const cap = new Path2D('M24 8 L31 21 L27.5 18 L24 22.5 L20.5 18 L17 21 Z');
+  ctx.fillStyle = '#f8fafc';
+  ctx.fill(cap);
+  return ctx.getImageData(0, 0, S, S);
+}
+
 export default function MapView() {
   const {
     activeLayers,
@@ -68,6 +98,7 @@ export default function MapView() {
     selectedRoute,
     setRadarStatus,
     reportLayerCount,
+    flyTo,
   } = useAppContext();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -75,6 +106,7 @@ export default function MapView() {
   const pollers = useRef({}); // layerId -> interval id
   const rafRef = useRef(null); // earthquake pulse loop
   const overlayRef = useRef(null); // deck.gl overlay hosting the wind particles
+  const windLibsRef = useRef(null); // cached dynamic-import promise (deck.gl + weatherlayers)
   const interactive = useRef(new Set()); // clickable vector layer ids
   const activeRef = useRef(activeLayers);
   activeRef.current = activeLayers;
@@ -137,6 +169,9 @@ export default function MapView() {
         const name = `plane-${Object.keys(PLANE_KINDS)[i]}`;
         if (!map.hasImage(name)) map.addImage(name, makePlaneIcon(color));
       });
+      Object.entries(MTN_VARIANTS).forEach(([name, colors]) => {
+        if (!map.hasImage(name)) map.addImage(name, makeMountainIcon(colors));
+      });
       readyRef.current = true;
       syncLayers(activeRef.current);
     });
@@ -184,12 +219,16 @@ export default function MapView() {
   }
 
   // Insert raster imagery just above the background, below any data layers.
+  // Companion layers (-halo, -pulse) resolve to their parent's registry entry
+  // so rasters can't slot in between a marker and its halo.
   function firstAbove() {
     const map = mapRef.current;
     const layers = map.getStyle().layers || [];
-    const first = layers.find(
-      (l) => l.id.startsWith(lyrId('')) && VECTOR_TYPES.has(LAYER_BY_ID[l.id.slice(4)]?.type)
-    );
+    const first = layers.find((l) => {
+      if (!l.id.startsWith(lyrId(''))) return false;
+      const baseId = l.id.slice(4).replace(/-(halo|pulse)$/, '');
+      return VECTOR_TYPES.has(LAYER_BY_ID[baseId]?.type);
+    });
     return first?.id;
   }
 
@@ -258,16 +297,28 @@ export default function MapView() {
       return;
     }
     if (layer.id === 'mountains') {
-      // Scale/brighten with `alertLevel` (promoted by entitiesToGeoJSON):
-      // 0 quiet, 1 model-outlook storm signal, 2 official NWS winter alert.
+      // Snow-capped peak icons that swap variant and grow with `alertLevel`
+      // (promoted by entitiesToGeoJSON): 0 quiet, 1 model-outlook storm
+      // signal, 2 official NWS winter alert — plus a soft halo behind
+      // alerting peaks so they read at a glance.
       map.addLayer({
-        id, source, type: 'circle',
+        id: `${id}-halo`, source, type: 'circle',
+        filter: ['>', ['get', 'alertLevel'], 0],
         paint: {
-          'circle-radius': ['step', ['get', 'alertLevel'], 4.5, 1, 6.5, 2, 9],
-          'circle-color': ['step', ['get', 'alertLevel'], layer.color, 1, '#dbeafe', 2, '#fbbf24'],
-          'circle-opacity': 0.95,
-          'circle-stroke-color': ['step', ['get', 'alertLevel'], '#0b1220', 2, '#fff7ed'],
-          'circle-stroke-width': ['step', ['get', 'alertLevel'], 0.6, 1, 1.2, 2, 1.6],
+          'circle-radius': ['step', ['get', 'alertLevel'], 11, 2, 14],
+          'circle-color': ['step', ['get', 'alertLevel'], '#93c5fd', 2, '#fbbf24'],
+          'circle-opacity': 0.25,
+          'circle-stroke-color': ['step', ['get', 'alertLevel'], '#bfdbfe', 2, '#fbbf24'],
+          'circle-stroke-width': 1,
+          'circle-stroke-opacity': 0.5,
+        },
+      });
+      map.addLayer({
+        id, source, type: 'symbol',
+        layout: {
+          'icon-image': ['match', ['get', 'alertLevel'], 1, 'mtn-1', 2, 'mtn-2', 'mtn-0'],
+          'icon-size': ['step', ['get', 'alertLevel'], 0.5, 1, 0.62, 2, 0.74],
+          'icon-allow-overlap': true,
         },
       });
       return;
@@ -291,7 +342,7 @@ export default function MapView() {
     clearInterval(pollers.current[layer.id]);
     delete pollers.current[layer.id];
     interactive.current.delete(lyrId(layer.id));
-    [lyrId(layer.id), `${lyrId(layer.id)}-pulse`].forEach((id) => {
+    [lyrId(layer.id), `${lyrId(layer.id)}-pulse`, `${lyrId(layer.id)}-halo`].forEach((id) => {
       if (map.getLayer(id)) map.removeLayer(id);
     });
     if (map.getSource(srcId(layer.id))) map.removeSource(srcId(layer.id));
@@ -374,11 +425,21 @@ export default function MapView() {
 
   async function ensureWind() {
     const map = mapRef.current;
+    // The wind stack (deck.gl + weatherlayers-gl) is by far the heaviest
+    // dependency, so it loads on first toggle only; the promise is cached so
+    // repeated toggles don't re-import.
+    windLibsRef.current ??= Promise.all([
+      import('@deck.gl/mapbox'),
+      import('weatherlayers-gl'),
+    ]);
+    const [{ MapboxOverlay }, { ParticleLayer, ImageType }] = await windLibsRef.current;
+    const wind = await loadWindData();
+    // Bail if the layer was toggled off (or the map torn down) while loading.
+    if (!mapRef.current || !activeRef.current.has('wind')) return;
     if (!overlayRef.current) {
       overlayRef.current = new MapboxOverlay({ interleaved: false, layers: [] });
       map.addControl(overlayRef.current);
     }
-    const wind = await loadWindData();
     overlayRef.current.setProps({
       layers: [
         new ParticleLayer({
@@ -420,6 +481,19 @@ export default function MapView() {
     if (readyRef.current) setBaseImagery(baseLayer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseLayer]);
+
+  // Fly-to requests (alerts drawer, etc.) — smooth camera move that never
+  // zooms OUT past the user's current zoom.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !flyTo) return;
+    map.flyTo({
+      center: [flyTo.lng, flyTo.lat],
+      zoom: Math.max(map.getZoom(), flyTo.zoom ?? 7),
+      duration: 2200,
+      essential: true,
+    });
+  }, [flyTo]);
 
   // Great-circle route arc for the selected flight.
   useEffect(() => {

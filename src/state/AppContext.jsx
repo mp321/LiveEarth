@@ -9,7 +9,11 @@ import {
 import { LAYER_REGISTRY, LAYER_BY_ID } from './layerRegistry';
 import { BASE_IMAGERY, DEFAULT_BASE } from '../services/rasterSources';
 import { flightRouteUrl, fetchAirport } from '../services/globalStreams';
+import { fetchMountainAlerts } from '../services/snowData';
 import { INITIAL_VIEW, publishViewState } from './urlState';
+
+// Winter-alert poll cadence — only while the tab is open (notifications v1).
+const ALERT_POLL_MS = 15 * 60 * 1000;
 
 // -----------------------------------------------------------------------------
 // Global application state
@@ -57,6 +61,42 @@ export function AppProvider({ children }) {
     setLayerCounts((prev) =>
       prev[layerId] === count ? prev : { ...prev, [layerId]: count }
     );
+  }, []);
+
+  // Winter alerts + storm signals for the mountain seed list, polled on load
+  // and every 15 min while the tab is open. Powers the ControlPanel badge and
+  // Alerts drawer. fetchMountainAlerts degrades to its last good list.
+  const [mountainAlerts, setMountainAlerts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const alerts = await fetchMountainAlerts();
+        if (!cancelled) setMountainAlerts(alerts);
+      } catch {
+        /* degrade silently — alerting must never break the globe */
+      }
+    };
+    poll();
+    const id = setInterval(poll, ALERT_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  // Badge counts per layer id, rendered generically by the ControlPanel next
+  // to each toggle (today only mountains publishes one).
+  const layerBadges = useMemo(
+    () => (mountainAlerts.length ? { mountains: mountainAlerts.length } : {}),
+    [mountainAlerts]
+  );
+
+  // Camera fly-to requests (e.g. clicking an alert) — MapView consumes them.
+  // `ts` makes repeat clicks on the same target re-trigger the effect.
+  const [flyTo, setFlyTo] = useState(null);
+  const requestFlyTo = useCallback((target) => {
+    setFlyTo({ ...target, ts: Date.now() });
   }, []);
 
   const toggleLayer = useCallback((layerId) => {
@@ -154,6 +194,10 @@ export function AppProvider({ children }) {
       setRadarStatus,
       layerCounts,
       reportLayerCount,
+      mountainAlerts,
+      layerBadges,
+      flyTo,
+      requestFlyTo,
     }),
     [
       activeLayers,
@@ -166,6 +210,10 @@ export function AppProvider({ children }) {
       radarStatus,
       layerCounts,
       reportLayerCount,
+      mountainAlerts,
+      layerBadges,
+      flyTo,
+      requestFlyTo,
     ]
   );
 
