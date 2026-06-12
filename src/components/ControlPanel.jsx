@@ -67,7 +67,7 @@ function LayerToggle({ layer }) {
       <button
         type="button"
         onClick={() => toggleLayer(layer.id)}
-        className="group flex w-full items-center gap-3 px-3 pt-3 pb-2 text-left"
+        className="group flex w-full items-center gap-3 px-3 py-2 text-left"
       >
         <span
           className="h-2.5 w-2.5 shrink-0 rounded-full transition-all"
@@ -81,11 +81,8 @@ function LayerToggle({ layer }) {
           <p className="truncate text-sm font-medium text-slate-100">
             {layer.label}
           </p>
-          <p className="truncate text-[11px] text-slate-400">
-            {layer.description}
-          </p>
           {note && (
-            <p className="mt-1 text-[10px] leading-snug text-amber-300/80">
+            <p className="mt-0.5 text-[10px] leading-snug text-amber-300/80">
               {note}
             </p>
           )}
@@ -102,8 +99,8 @@ function LayerToggle({ layer }) {
         </span>
       </button>
 
-      {/* Expandable details: full (untruncated) description, the live radar frame
-          time, and a drill-down link to the provider's own page. */}
+      {/* Expandable details: description, the live radar frame time, and a
+          drill-down link to the provider's own page. */}
       <div className="px-3 pb-2 pl-8">
         <button
           type="button"
@@ -215,7 +212,14 @@ export default function ControlPanel() {
         >
           <div className="overflow-hidden">
             <BaseImagerySelect />
-            <div className="space-y-2">
+            {/* Scrollable layer list — capped so the panel never overflows the viewport */}
+            <div
+              className="max-h-[calc(100vh-20rem)] overflow-y-auto -mr-1 pr-1 space-y-1.5
+                [&::-webkit-scrollbar]:w-1
+                [&::-webkit-scrollbar-track]:bg-transparent
+                [&::-webkit-scrollbar-thumb]:rounded-full
+                [&::-webkit-scrollbar-thumb]:bg-white/20"
+            >
               {LAYER_REGISTRY.map((layer) => (
                 <LayerToggle key={layer.id} layer={layer} />
               ))}
