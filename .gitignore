@@ -25,3 +25,8 @@ dist-ssr
 
 # Vercel
 .vercel
+
+# Env files (secrets) — .env.example is the committed template
+.env
+.env.*
+!.env.example

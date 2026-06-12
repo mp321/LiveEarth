@@ -18,6 +18,7 @@ import {
 } from '../services/rasterSources';
 import { loadWindData } from '../services/windData';
 import { useAppContext } from '../state/AppContext';
+import { INITIAL_VIEW, publishViewState } from '../state/urlState';
 
 const REFRESH_MS = 30_000;
 const RADAR_FRAME_MS = 900;
@@ -60,8 +61,14 @@ function makePlaneIcon(color) {
 }
 
 export default function MapView() {
-  const { activeLayers, baseLayer, selectEntity, selectedRoute, setRadarStatus } =
-    useAppContext();
+  const {
+    activeLayers,
+    baseLayer,
+    selectEntity,
+    selectedRoute,
+    setRadarStatus,
+    reportLayerCount,
+  } = useAppContext();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const readyRef = useRef(false);
@@ -76,10 +83,15 @@ export default function MapView() {
 
   // --- map setup (once) --------------------------------------------------------
   useEffect(() => {
+    // Restore the camera from the URL hash / localStorage when present so a
+    // shared link (or reload) reproduces the exact view.
+    const cam = INITIAL_VIEW.camera;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
+      center: cam ? [cam.lng, cam.lat] : DEFAULT_CENTER,
+      zoom: cam?.zoom ?? DEFAULT_ZOOM,
+      bearing: cam?.bearing ?? 0,
+      pitch: cam?.pitch ?? 0,
       maxZoom: 17,
       attributionControl: { compact: true },
       style: {
@@ -90,6 +102,24 @@ export default function MapView() {
     });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+
+    // Publish the camera into the shareable URL hash whenever movement settles
+    // (and once on load so the hash is complete from the start). urlState
+    // debounces the actual writes.
+    const publishCamera = () => {
+      const c = map.getCenter();
+      publishViewState({
+        camera: {
+          lng: c.lng,
+          lat: c.lat,
+          zoom: map.getZoom(),
+          bearing: map.getBearing(),
+          pitch: map.getPitch(),
+        },
+      });
+    };
+    map.on('moveend', publishCamera);
+    map.on('load', publishCamera);
 
     map.on('style.load', () => {
       map.setProjection({ type: 'globe' });
@@ -183,6 +213,7 @@ export default function MapView() {
     if (!pollers.current[layer.id]) {
       const load = async () => {
         const entities = await LAYER_FETCHERS[layer.id]();
+        reportLayerCount(layer.id, entities.length);
         const s = map.getSource(sid);
         if (s) s.setData(entitiesToGeoJSON(entities));
       };

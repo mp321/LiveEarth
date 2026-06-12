@@ -52,29 +52,24 @@ export function entitiesToGeoJSON(entities) {
 // cross-origin fetch is blocked by the browser and resolves to [].
 const NDBC_URL = '/proxy/ndbc';
 
-// airplanes.live community ADS-B network (free, keyless, no auth) — replaces the
-// deprecated OpenSky anonymous API. It sends `Access-Control-Allow-Origin: *`,
-// so we fetch it directly (no proxy needed); fetching from each browser also
-// spreads requests across users' own IPs, respecting the per-client rate limit.
-//
-//   /v2/point/{lat}/{lon}/{radius}  — radius in nautical miles, 250 = max.
-// There is no keyless global feed (airplanes.live /v2/all is 404, adsb.fi
-// /api/v2/all is 400), so coverage is a 250 nm radius around this point.
-//
-// TODO (global live, eventually): for worldwide coverage, switch to a feed that
-// allows it — OpenSky Network (free account + OAuth2 client credentials, proxied
-// through a Vercel serverless function so the secret stays server-side) or a
-// paid adsbexchange / RapidAPI key. Both need a backend hop, unlike this keyless
-// feed — not a drop-in URL swap.
-//
-// Centered on the continental US; aircraft come back under `data.ac`.
+// Primary flights feed: our serverless proxy (api/flights.js), which does the
+// OpenSky Network OAuth2 client-credentials dance server-side (secrets stay in
+// Vercel env vars) and returns GLOBAL coverage normalized to the same
+// readsb-ish `{ ac: [...] }` shape parsed below. Cached 60s upstream so all
+// visitors share one OpenSky call. Requires `vercel dev` locally (see README).
+const FLIGHTS_URL = '/api/flights';
+
+// Fallback: airplanes.live community ADS-B network (free, keyless, CORS-open).
+// Used when the proxy 5xxes (OPENSKY_* env vars missing) or doesn't exist
+// (plain `npm run dev` without functions). No keyless global feed exists, so
+// fallback coverage is a 250 nm radius centered on the continental US.
 //
 // USAGE: airplanes.live is for personal / non-commercial use; we credit it with
 // a link in the ControlPanel footer.
 //
 // RATE LIMIT: ~1 request per second (invalid requests trigger temporary IP
 // bans). Keep UI polling at 10-15s MINIMUM (MapView refreshes every 30s).
-const FLIGHTS_URL = 'https://api.airplanes.live/v2/point/39.8/-98.6/250';
+const FLIGHTS_FALLBACK_URL = 'https://api.airplanes.live/v2/point/39.8/-98.6/250';
 
 // Per-callsign route lookup (origin/destination). ADS-B doesn't broadcast route,
 // so the TelemetrySidebar resolves it lazily on click via hexdb.io (CORS-enabled),
@@ -125,11 +120,11 @@ const USGS_URL =
 // event's live position.
 const EONET_URL = 'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=200';
 
-// CelesTrak TLEs for active satellites. CORS-enabled (sends ACAO:* when an Origin
-// header is present, which browsers always do). Positions are propagated
-// client-side with satellite.js; the feed has 15k+ objects so we cap the set.
-const CELESTRAK_URL =
-  'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle';
+// CelesTrak TLEs for active satellites, via our serverless proxy (api/tle.js)
+// so all clients share one cached upstream fetch instead of each browser
+// hitting CelesTrak's rate limiter. Positions are propagated client-side with
+// satellite.js; the feed has 15k+ objects so we cap the set.
+const TLE_URL = '/api/tle';
 const SAT_LIMIT = 500;
 
 // ADS-B emitter "category" (wake-turbulence class) code -> readable label.
@@ -158,18 +153,30 @@ const SQUAWK_ALERTS = {
 };
 
 /**
- * Live aircraft positions from airplanes.live (free, keyless, no auth).
- * Filters to aircraft with valid coordinates and caps the result set for render
- * performance.
+ * Live aircraft positions — global via the OpenSky proxy, falling back to
+ * airplanes.live (US-area) when the proxy is unavailable. Filters to aircraft
+ * with valid coordinates and caps the result set for render performance.
  *
  * @returns {Promise<Array>} normalized flight entities
  */
 export async function fetchLiveFlights() {
   try {
-    const res = await fetch(FLIGHTS_URL);
-    if (!res.ok) throw new Error(`airplanes.live responded ${res.status}`);
-
-    const data = await res.json();
+    // Try the global proxy first; on ANY failure — network error, 5xx when
+    // OPENSKY_* is unconfigured, or a non-JSON body (a dev server's SPA
+    // fallback answers /api/* with 200 + HTML) — degrade to the keyless
+    // regional feed. Both return the same `{ ac: [...] }` shape, so parsing
+    // below is shared.
+    let data;
+    try {
+      const res = await fetch(FLIGHTS_URL);
+      const isJson = (res.headers.get('content-type') || '').includes('json');
+      if (!res.ok || !isJson) throw new Error(`/api/flights responded ${res.status}`);
+      data = await res.json();
+    } catch {
+      const res = await fetch(FLIGHTS_FALLBACK_URL);
+      if (!res.ok) throw new Error(`flights upstream responded ${res.status}`);
+      data = await res.json();
+    }
     // Aircraft come back under `data.ac` (the re-api format shared by
     // airplanes.live and adsb.fi); fall back to `data.aircraft` for other
     // readsb variants so the mapping is portable across providers.
@@ -409,30 +416,58 @@ export async function fetchLiveEonet() {
  * @returns {Promise<Array>} normalized satellite entities
  */
 // CelesTrak rate-limits aggressively and asks clients to CACHE, not poll. TLEs
-// stay valid for hours, so we fetch the element set at most once per hour and
-// re-propagate the cached TLEs to "now" on each refresh — positions still update
-// every cycle without re-hitting CelesTrak (which would risk a 403 IP block).
-//
-// TODO (rate-limit workarounds): the satellites layer goes empty whenever
-// CelesTrak returns a 403 / "GP data has not updated since your last successful
-// request" body. Explore: (1) persist the last good element set to localStorage
-// so reloads don't re-fetch; (2) proxy through a cached serverless function so
-// all clients share one upstream hit; (3) fall back to an alternate source
-// (e.g. Space-Track) when CelesTrak blocks. Guard against caching the error body.
+// stay valid for hours, so the element set is cached at three levels: module
+// scope (1h) so refresh cycles only re-propagate, localStorage so page reloads
+// don't refetch at all, and the serverless proxy (api/tle.js, 2h shared, serves
+// stale on a CelesTrak 403) so all clients ride one upstream fetch. On total
+// failure we serve whatever stale copy exists before giving up.
+// TODO: fall back to an alternate source (e.g. Space-Track) when CelesTrak blocks.
 let tleCache = { text: null, fetchedAt: 0 };
 const TLE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const TLE_STORE_KEY = 'liveearth:tle';
+
+// Upstream error prose or a dev server's SPA-fallback HTML must never be
+// cached as an element set — accept only bodies shaped like a TLE catalog
+// (name line followed by "1 ..." / "2 ..." lines).
+function looksLikeTle(text) {
+  const lines = (text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
+  return lines.length >= 3 && lines[1].startsWith('1 ') && lines[2].startsWith('2 ');
+}
+
+function readStoredTle() {
+  try {
+    const { text, fetchedAt } = JSON.parse(localStorage.getItem(TLE_STORE_KEY));
+    return looksLikeTle(text) && Number.isFinite(fetchedAt)
+      ? { text, fetchedAt }
+      : null;
+  } catch {
+    return null; // absent or malformed
+  }
+}
 
 async function getActiveTle() {
+  if (!tleCache.text) {
+    const stored = readStoredTle();
+    if (stored) tleCache = stored;
+  }
   if (tleCache.text && Date.now() - tleCache.fetchedAt < TLE_TTL_MS) {
     return tleCache.text;
   }
-  const res = await fetch(CELESTRAK_URL);
-  if (!res.ok) {
+  try {
+    const res = await fetch(TLE_URL);
+    const text = res.ok ? await res.text() : null;
+    if (!looksLikeTle(text)) throw new Error(`/api/tle responded ${res.status}`);
+    tleCache = { text, fetchedAt: Date.now() };
+    try {
+      localStorage.setItem(TLE_STORE_KEY, JSON.stringify(tleCache));
+    } catch {
+      /* quota exceeded / private mode — memory cache still works */
+    }
+    return tleCache.text;
+  } catch (err) {
     if (tleCache.text) return tleCache.text; // serve stale on a transient block
-    throw new Error(`CelesTrak responded ${res.status}`);
+    throw err;
   }
-  tleCache = { text: await res.text(), fetchedAt: Date.now() };
-  return tleCache.text;
 }
 
 export async function fetchLiveSatellites() {
@@ -491,11 +526,12 @@ export async function fetchLiveSatellites() {
   }
 }
 
-// Ground-level air quality (PM2.5) from OpenAQ v3. The v3 API requires a free
-// key, read from VITE_OPENAQ_KEY; without it the layer resolves to [] so the
-// rest of the globe is unaffected. pm25 is parameter id 2.
-const OPENAQ_URL = 'https://api.openaq.org/v3/parameters/2/latest?limit=1000';
-const OPENAQ_KEY = import.meta.env?.VITE_OPENAQ_KEY;
+// Ground-level air quality (PM2.5) from OpenAQ v3, via our serverless proxy
+// (api/airquality.js) which holds the required API key server-side (OPENAQ_KEY
+// in Vercel env vars — no more VITE_-inlined key in the bundle). Without the
+// key the proxy 503s and the layer resolves to [] so the rest of the globe is
+// unaffected; the registry note tells the operator what to configure.
+const OPENAQ_URL = '/api/airquality';
 
 function aqiBand(pm25) {
   if (pm25 == null) return 'Unknown';
@@ -508,10 +544,10 @@ function aqiBand(pm25) {
 }
 
 export async function fetchLiveAirQuality() {
-  if (!OPENAQ_KEY) return [];
   try {
-    const res = await fetch(OPENAQ_URL, { headers: { 'X-API-Key': OPENAQ_KEY } });
-    if (!res.ok) throw new Error(`OpenAQ responded ${res.status}`);
+    const res = await fetch(OPENAQ_URL);
+    const isJson = (res.headers.get('content-type') || '').includes('json');
+    if (!res.ok || !isJson) throw new Error(`OpenAQ proxy responded ${res.status}`);
     const data = await res.json();
     const results = Array.isArray(data?.results) ? data.results : [];
 

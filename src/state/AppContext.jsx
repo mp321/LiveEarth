@@ -6,8 +6,10 @@ import {
   useState,
   useCallback,
 } from 'react';
-import { LAYER_REGISTRY } from './layerRegistry';
+import { LAYER_REGISTRY, LAYER_BY_ID } from './layerRegistry';
+import { BASE_IMAGERY, DEFAULT_BASE } from '../services/rasterSources';
 import { flightRouteUrl, fetchAirport } from '../services/globalStreams';
+import { INITIAL_VIEW, publishViewState } from './urlState';
 
 // -----------------------------------------------------------------------------
 // Global application state
@@ -23,20 +25,39 @@ import { flightRouteUrl, fetchAirport } from '../services/globalStreams';
 
 const AppContext = createContext(null);
 
-// Seed activeLayers from any profiles marked defaultActive in the registry.
+// Seed activeLayers from the restored URL/localStorage view when present
+// (filtered to ids that still exist), else from the registry defaults.
 function initialActiveLayers() {
+  if (INITIAL_VIEW.layers) {
+    return new Set(INITIAL_VIEW.layers.filter((id) => id in LAYER_BY_ID));
+  }
   return new Set(
     LAYER_REGISTRY.filter((layer) => layer.defaultActive).map((layer) => layer.id)
   );
 }
 
+// Restored base imagery key, if it's still a valid option.
+const initialBase =
+  INITIAL_VIEW.base && BASE_IMAGERY[INITIAL_VIEW.base]
+    ? INITIAL_VIEW.base
+    : DEFAULT_BASE;
+
 export function AppProvider({ children }) {
   const [activeLayers, setActiveLayers] = useState(initialActiveLayers);
   const [selectedEntity, setSelectedEntity] = useState(null);
-  const [baseLayer, setBaseLayer] = useState('esri'); // base imagery key
+  const [baseLayer, setBaseLayer] = useState(initialBase); // base imagery key
   // Current RainViewer radar frame, published by MapView's animation timer so the
   // ControlPanel can show what moment is on screen: { time, kind, index, total }.
   const [radarStatus, setRadarStatus] = useState(null);
+  // Entity count per layer id, published by MapView after each fetch. The
+  // ControlPanel uses it to hide `noteUntilData` setup hints once data flows.
+  const [layerCounts, setLayerCounts] = useState({});
+
+  const reportLayerCount = useCallback((layerId, count) => {
+    setLayerCounts((prev) =>
+      prev[layerId] === count ? prev : { ...prev, [layerId]: count }
+    );
+  }, []);
 
   const toggleLayer = useCallback((layerId) => {
     setActiveLayers((prev) => {
@@ -54,6 +75,12 @@ export function AppProvider({ children }) {
     (layerId) => activeLayers.has(layerId),
     [activeLayers]
   );
+
+  // Mirror layer/base selections to the shareable URL hash + localStorage
+  // (urlState debounces the writes; MapView publishes the camera the same way).
+  useEffect(() => {
+    publishViewState({ layers: [...activeLayers], base: baseLayer });
+  }, [activeLayers, baseLayer]);
 
   // Select an entity (opens the telemetry sidebar) or clear it (null).
   const selectEntity = useCallback((entity) => {
@@ -125,6 +152,8 @@ export function AppProvider({ children }) {
       setBaseLayer,
       radarStatus,
       setRadarStatus,
+      layerCounts,
+      reportLayerCount,
     }),
     [
       activeLayers,
@@ -135,6 +164,8 @@ export function AppProvider({ children }) {
       selectedRoute,
       baseLayer,
       radarStatus,
+      layerCounts,
+      reportLayerCount,
     ]
   );
 

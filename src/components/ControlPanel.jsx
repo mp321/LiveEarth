@@ -46,12 +46,16 @@ function radarFrameSummary(status) {
 }
 
 function LayerToggle({ layer }) {
-  const { isLayerActive, toggleLayer, radarStatus } = useAppContext();
+  const { isLayerActive, toggleLayer, radarStatus, layerCounts } = useAppContext();
   const active = isLayerActive(layer.id);
   const [expanded, setExpanded] = useState(false);
 
   const radar =
     layer.id === 'radar' && active ? radarFrameSummary(radarStatus) : null;
+
+  // Setup hints (noteUntilData) disappear once the layer produces data.
+  const note =
+    layer.noteUntilData && (layerCounts[layer.id] ?? 0) > 0 ? null : layer.note;
 
   return (
     <div
@@ -80,9 +84,9 @@ function LayerToggle({ layer }) {
           <p className="truncate text-[11px] text-slate-400">
             {layer.description}
           </p>
-          {layer.note && (
+          {note && (
             <p className="mt-1 text-[10px] leading-snug text-amber-300/80">
-              {layer.note}
+              {note}
             </p>
           )}
         </div>
@@ -223,6 +227,15 @@ export default function ControlPanel() {
               <span className="mt-1.5 block text-slate-600">
                 Imagery Esri / EOX / NASA GIBS · weather NOAA, RainViewer,
                 WeatherLayers · flights{' '}
+                <a
+                  href="https://opensky-network.org/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-slate-400"
+                >
+                  OpenSky Network
+                </a>{' '}
+                /{' '}
                 <a
                   href="https://airplanes.live/"
                   target="_blank"

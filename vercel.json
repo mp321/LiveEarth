@@ -12,6 +12,6 @@
       "source": "/proxy/rainviewer/:path*",
       "destination": "https://tilecache.rainviewer.com/:path*"
     },
-    { "source": "/(.*)", "destination": "/" }
+    { "source": "/((?!api/).*)", "destination": "/" }
   ]
 }

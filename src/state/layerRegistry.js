@@ -11,6 +11,8 @@
 //   particles  animated flow field (wind)
 //
 // Fields: id, label, type, defaultActive, color, description, optional note.
+// A note with `noteUntilData: true` is a setup hint — the ControlPanel hides
+// it once the layer's fetcher returns its first non-empty result.
 // sourceUrl / sourceLabel power the "More from source" drill-down link the
 // ControlPanel renders under each toggle's expandable details.
 
@@ -61,7 +63,8 @@ export const LAYER_REGISTRY = [
     type: 'aircraft',
     defaultActive: false,
     color: '#38bdf8',
-    description: 'Real-time aircraft positions via the airplanes.live API.',
+    description:
+      'Global real-time aircraft positions via the OpenSky Network (airplanes.live fallback).',
     sourceUrl: 'https://globe.airplanes.live/',
     sourceLabel: 'airplanes.live globe',
   },
@@ -72,6 +75,8 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#a3e635',
     description: 'Ground-station particulate readings from OpenAQ.',
+    note: 'Configure OPENAQ_KEY in Vercel for this layer.',
+    noteUntilData: true,
     sourceUrl: 'https://explore.openaq.org/',
     sourceLabel: 'OpenAQ Explorer',
   },
@@ -112,7 +117,6 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#a78bfa',
     description: 'Live orbital positions calculated from CelesTrak TLEs.',
-    note: 'May be intermittent — CelesTrak rate-limits TLE requests.',
     sourceUrl: 'https://celestrak.org/',
     sourceLabel: 'CelesTrak',
   },
