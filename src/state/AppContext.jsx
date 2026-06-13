@@ -15,6 +15,9 @@ import { INITIAL_VIEW, publishViewState } from './urlState';
 // Winter-alert poll cadence — only while the tab is open (notifications v1).
 const ALERT_POLL_MS = 15 * 60 * 1000;
 
+// Alert feed registry — Phase 8 appends fetchSevereAlertFeed here.
+const ALERT_FEEDS = [fetchMountainAlerts];
+
 // -----------------------------------------------------------------------------
 // Global application state
 // -----------------------------------------------------------------------------
@@ -63,16 +66,24 @@ export function AppProvider({ children }) {
     );
   }, []);
 
-  // Winter alerts + storm signals for the mountain seed list, polled on load
-  // and every 15 min while the tab is open. Powers the ControlPanel badge and
-  // Alerts drawer. fetchMountainAlerts degrades to its last good list.
-  const [mountainAlerts, setMountainAlerts] = useState([]);
+  // Active alerts across all ALERT_FEEDS, polled on load and every 15 min.
+  // Powers the ControlPanel badge and Alerts drawer. Individual feeds degrade
+  // to their last good list, so a dead upstream never clears all alerts.
+  const [alerts, setAlerts] = useState([]);
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
       try {
-        const alerts = await fetchMountainAlerts();
-        if (!cancelled) setMountainAlerts(alerts);
+        const settled = await Promise.allSettled(ALERT_FEEDS.map((fn) => fn()));
+        if (!cancelled) {
+          const all = settled
+            .filter((s) => s.status === 'fulfilled')
+            .flatMap((s) => s.value);
+          // Sort official alerts (level 2) before outlooks (level 1); break ties
+          // alphabetically. Re-sorting here handles cross-feed ordering.
+          all.sort((a, b) => b.level - a.level || (a.name ?? '').localeCompare(b.name ?? ''));
+          setAlerts(all);
+        }
       } catch {
         /* degrade silently — alerting must never break the globe */
       }
@@ -85,11 +96,14 @@ export function AppProvider({ children }) {
     };
   }, []);
 
-  // Badge counts per layer id, rendered generically by the ControlPanel next
-  // to each toggle (today only mountains publishes one).
+  // Generic badge counts per layer id — no layer special-casing.
   const layerBadges = useMemo(
-    () => (mountainAlerts.length ? { mountains: mountainAlerts.length } : {}),
-    [mountainAlerts]
+    () =>
+      alerts.reduce((acc, a) => {
+        acc[a.layerId] = (acc[a.layerId] ?? 0) + 1;
+        return acc;
+      }, {}),
+    [alerts]
   );
 
   // Camera fly-to requests (e.g. clicking an alert) — MapView consumes them.
@@ -97,6 +111,13 @@ export function AppProvider({ children }) {
   const [flyTo, setFlyTo] = useState(null);
   const requestFlyTo = useCallback((target) => {
     setFlyTo({ ...target, ts: Date.now() });
+  }, []);
+
+  // Apply a preset by replacing activeLayers with exactly the preset's layer
+  // set. Filters against LAYER_BY_ID so a preset may safely name a layer from
+  // a not-yet-implemented phase without breaking anything.
+  const applyPreset = useCallback((layerIds) => {
+    setActiveLayers(new Set(layerIds.filter((id) => id in LAYER_BY_ID)));
   }, []);
 
   const toggleLayer = useCallback((layerId) => {
@@ -185,6 +206,7 @@ export function AppProvider({ children }) {
       activeLayers,
       toggleLayer,
       isLayerActive,
+      applyPreset,
       selectedEntity,
       selectEntity,
       selectedRoute,
@@ -194,7 +216,7 @@ export function AppProvider({ children }) {
       setRadarStatus,
       layerCounts,
       reportLayerCount,
-      mountainAlerts,
+      alerts,
       layerBadges,
       flyTo,
       requestFlyTo,
@@ -203,6 +225,7 @@ export function AppProvider({ children }) {
       activeLayers,
       toggleLayer,
       isLayerActive,
+      applyPreset,
       selectedEntity,
       selectEntity,
       selectedRoute,
@@ -210,7 +233,7 @@ export function AppProvider({ children }) {
       radarStatus,
       layerCounts,
       reportLayerCount,
-      mountainAlerts,
+      alerts,
       layerBadges,
       flyTo,
       requestFlyTo,

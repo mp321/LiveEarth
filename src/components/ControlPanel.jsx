@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { LAYER_REGISTRY } from '../state/layerRegistry';
+import { useState, useCallback } from 'react';
+import { LAYER_REGISTRY, LAYER_BY_ID, LAYER_PRESETS } from '../state/layerRegistry';
 import { BASE_IMAGERY } from '../services/rasterSources';
 import { useAppContext } from '../state/AppContext';
 
@@ -201,24 +201,114 @@ function LayerToggle({ layer }) {
 }
 
 // -----------------------------------------------------------------------------
+// Layer groups — derived from the registry at module load time.
+// `group` lives in the registry (not hardcoded here) so adding a new layer
+// entry automatically places it in the right section with no UI changes.
+// -----------------------------------------------------------------------------
+const LAYER_GROUPS = (() => {
+  const order = [];
+  const map = {};
+  for (const layer of LAYER_REGISTRY) {
+    const g = layer.group ?? 'Other';
+    if (!map[g]) { map[g] = []; order.push(g); }
+    map[g].push(layer);
+  }
+  return order.map((name) => ({ name, layers: map[name] }));
+})();
+
+function GroupSection({ name, layers, collapsed, onToggle }) {
+  const { isLayerActive } = useAppContext();
+  const activeCount = layers.filter((l) => isLayerActive(l.id)).length;
+
+  return (
+    <div className="mb-1">
+      <button
+        type="button"
+        onClick={() => onToggle(name)}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center gap-2 px-1 py-1.5 text-left text-[10px] uppercase tracking-wider text-slate-400 transition-colors hover:text-slate-200"
+      >
+        <svg
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`h-3 w-3 shrink-0 transition-transform duration-200 ${collapsed ? '-rotate-90' : ''}`}
+        >
+          <path d="M6 8l4 4 4-4" />
+        </svg>
+        <span className="flex-1">{name}</span>
+        <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold text-slate-300">
+          {activeCount}/{layers.length}
+        </span>
+      </button>
+
+      {!collapsed && (
+        <div className="space-y-1.5">
+          {layers.map((layer) => (
+            <LayerToggle key={layer.id} layer={layer} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Preset chips
+// -----------------------------------------------------------------------------
+function PresetChips() {
+  const { activeLayers, applyPreset } = useAppContext();
+
+  return (
+    <div className="mb-3 flex flex-wrap gap-1.5">
+      {LAYER_PRESETS.map((preset) => {
+        // Active only when activeLayers exactly matches the preset — intentional:
+        // hand-toggling after a preset deselects the chip; presets are shortcuts,
+        // not modes. (See LAYER_PRESETS comment in layerRegistry.js.)
+        const active =
+          preset.layers.length === activeLayers.size &&
+          preset.layers.every((id) => activeLayers.has(id));
+        return (
+          <button
+            key={preset.id}
+            type="button"
+            onClick={() => applyPreset(preset.layers)}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors
+              ${active
+                ? 'bg-accent/80 text-white'
+                : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
+          >
+            {preset.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
 // AlertsDrawer (notifications v1)
 // -----------------------------------------------------------------------------
-// Compact drawer listing every mountain with an active NWS winter alert or a
-// model-outlook storm signal (AppContext polls these every 15 min). Clicking
-// an entry turns the mountains layer on, opens the peak's telemetry, and flies
-// the camera to it. Hidden entirely while there is nothing to report.
+// Lists every active alert from all ALERT_FEEDS. Clicking an entry turns the
+// alert's own layer on, opens the entity's telemetry, and flies the camera to
+// it. Hidden entirely while there is nothing to report.
 // -----------------------------------------------------------------------------
 
 function AlertsDrawer() {
-  const { mountainAlerts, requestFlyTo, selectEntity, isLayerActive, toggleLayer } =
+  const { alerts, requestFlyTo, selectEntity, isLayerActive, toggleLayer } =
     useAppContext();
   const [open, setOpen] = useState(true);
-  if (!mountainAlerts.length) return null;
+  if (!alerts.length) return null;
 
   const goTo = (alert) => {
-    if (!isLayerActive('mountains')) toggleLayer('mountains');
+    // Toggle the alert's own layer on — not hardcoded to 'mountains' so any
+    // feed's alerts work correctly.
+    if (!isLayerActive(alert.layerId)) toggleLayer(alert.layerId);
     selectEntity(alert.entity);
-    requestFlyTo({ lng: alert.lng, lat: alert.lat, zoom: 7.5 });
+    requestFlyTo({ lng: alert.lng, lat: alert.lat, zoom: alert.zoom ?? 7.5 });
   };
 
   return (
@@ -242,10 +332,10 @@ function AlertsDrawer() {
           <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z M12 9v4 M12 17h.01" />
         </svg>
         <span className="flex-1 text-[11px] font-semibold uppercase tracking-wider text-amber-200">
-          Mountain alerts
+          Alerts
         </span>
         <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold leading-none text-slate-900">
-          {mountainAlerts.length}
+          {alerts.length}
         </span>
         <svg
           viewBox="0 0 20 20"
@@ -268,42 +358,68 @@ function AlertsDrawer() {
             [&::-webkit-scrollbar-thumb]:rounded-full
             [&::-webkit-scrollbar-thumb]:bg-white/20"
         >
-          {mountainAlerts.map((alert) => (
-            <li key={alert.id}>
-              <button
-                type="button"
-                onClick={() => goTo(alert)}
-                title="Fly to mountain"
-                className="w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/10"
-              >
-                <p className="flex items-center gap-1.5 text-xs font-medium text-slate-100">
-                  <span className="truncate">{alert.name}</span>
-                  <span
-                    className={`shrink-0 rounded px-1 py-0.5 text-[9px] uppercase tracking-wider ${
-                      alert.level === 2
-                        ? 'bg-amber-400/20 text-amber-200'
-                        : 'bg-sky-400/15 text-sky-200'
-                    }`}
-                  >
-                    {alert.level === 2 ? 'NWS alert' : 'outlook'}
-                  </span>
-                </p>
-                <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-slate-300">
-                  {alert.headline}
-                </p>
-                <p className="mt-0.5 text-[10px] text-slate-500">{alert.timeframe}</p>
-              </button>
-            </li>
-          ))}
+          {alerts.map((alert) => {
+            const layer = LAYER_BY_ID[alert.layerId];
+            return (
+              <li key={alert.id}>
+                <button
+                  type="button"
+                  onClick={() => goTo(alert)}
+                  title="Fly to location"
+                  className="w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/10"
+                >
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-slate-100">
+                    {layer && (
+                      <LayerIcon layer={layer} active={true} className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span className="truncate">{alert.name}</span>
+                    <span
+                      className={`shrink-0 rounded px-1 py-0.5 text-[9px] uppercase tracking-wider ${
+                        alert.level === 2
+                          ? 'bg-amber-400/20 text-amber-200'
+                          : 'bg-sky-400/15 text-sky-200'
+                      }`}
+                    >
+                      {alert.level === 2 ? 'alert' : 'outlook'}
+                    </span>
+                  </p>
+                  <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-slate-300">
+                    {alert.headline}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-slate-500">{alert.timeframe}</p>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
   );
 }
 
+function loadCollapsedGroups() {
+  try {
+    const raw = localStorage.getItem('liveearth:collapsedGroups');
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
 export default function ControlPanel() {
-  const { activeLayers, mountainAlerts } = useAppContext();
+  const { activeLayers, alerts } = useAppContext();
   const [collapsed, setCollapsed] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState(loadCollapsedGroups);
+
+  const toggleGroup = useCallback((groupName) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) next.delete(groupName);
+      else next.add(groupName);
+      localStorage.setItem('liveearth:collapsedGroups', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
 
   return (
     <aside className="pointer-events-auto fixed left-4 top-4 z-20 w-72 max-w-[80vw]">
@@ -318,12 +434,12 @@ export default function ControlPanel() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {collapsed && mountainAlerts.length > 0 && (
+            {collapsed && alerts.length > 0 && (
               <span
-                title={`${mountainAlerts.length} mountain alert${mountainAlerts.length === 1 ? '' : 's'}`}
+                title={`${alerts.length} active alert${alerts.length === 1 ? '' : 's'}`}
                 className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold leading-none text-slate-900"
               >
-                {mountainAlerts.length}
+                {alerts.length}
               </span>
             )}
             <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium text-slate-300">
@@ -362,16 +478,23 @@ export default function ControlPanel() {
           <div className="overflow-hidden">
             <AlertsDrawer />
             <BaseImagerySelect />
+            <PresetChips />
             {/* Scrollable layer list — capped so the panel never overflows the viewport */}
             <div
-              className="max-h-[calc(100vh-20rem)] overflow-y-auto -mr-1 pr-1 space-y-1.5
+              className="max-h-[calc(100vh-20rem)] overflow-y-auto -mr-1 pr-1
                 [&::-webkit-scrollbar]:w-1
                 [&::-webkit-scrollbar-track]:bg-transparent
                 [&::-webkit-scrollbar-thumb]:rounded-full
                 [&::-webkit-scrollbar-thumb]:bg-white/20"
             >
-              {LAYER_REGISTRY.map((layer) => (
-                <LayerToggle key={layer.id} layer={layer} />
+              {LAYER_GROUPS.map((group) => (
+                <GroupSection
+                  key={group.name}
+                  name={group.name}
+                  layers={group.layers}
+                  collapsed={collapsedGroups.has(group.name)}
+                  onToggle={toggleGroup}
+                />
               ))}
             </div>
 

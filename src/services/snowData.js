@@ -203,11 +203,14 @@ const formatStormSignal = (signal) =>
   )} in (model outlook — low confidence)`;
 
 // Compact alert-drawer item for one peak, or null when there is nothing to
-// flag. `entity` rides along so clicking the alert can populate the sidebar.
+// flag. `layerId` lets the generic AlertsDrawer toggle the right layer without
+// knowing what kind of alert this is. `entity` rides along so clicking the
+// alert can populate the sidebar without waiting for the layer to re-fetch.
 function toAlertItem(mtn, alert, signal, entity) {
   if (!alert && !signal) return null;
   return {
     id: mtn.id,
+    layerId: 'mountains',
     name: mtn.name,
     lat: mtn.lat,
     lng: mtn.lng,
