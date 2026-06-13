@@ -10,13 +10,15 @@ import { LAYER_REGISTRY, LAYER_BY_ID } from './layerRegistry';
 import { BASE_IMAGERY, DEFAULT_BASE } from '../services/rasterSources';
 import { flightRouteUrl, fetchAirport } from '../services/globalStreams';
 import { fetchMountainAlerts } from '../services/snowData';
+import { fetchSevereAlertFeed } from '../services/severeData';
 import { INITIAL_VIEW, publishViewState } from './urlState';
 
 // Winter-alert poll cadence — only while the tab is open (notifications v1).
 const ALERT_POLL_MS = 15 * 60 * 1000;
 
-// Alert feed registry — Phase 8 appends fetchSevereAlertFeed here.
-const ALERT_FEEDS = [fetchMountainAlerts];
+// Alert feed registry: each returns drawer items tagged with their own layerId,
+// so the badge counts and Alerts drawer stay generic across feeds.
+const ALERT_FEEDS = [fetchMountainAlerts, fetchSevereAlertFeed];
 
 // -----------------------------------------------------------------------------
 // Global application state

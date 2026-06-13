@@ -28,7 +28,9 @@ let alertCache = { at: 0, alerts: null };
 
 // NWS asks API clients to identify themselves via User-Agent. Browsers that
 // treat the header as immutable silently drop it and send their own — also fine.
-const NWS_HEADERS = {
+// Exported so other NWS fetchers (severeData) reuse the same identity instead
+// of duplicating the header block.
+export const NWS_HEADERS = {
   'User-Agent': 'MP_LiveEarth (mp32196761@gmail.com)',
   Accept: 'application/geo+json',
 };

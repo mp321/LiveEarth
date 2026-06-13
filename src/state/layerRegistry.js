@@ -7,10 +7,13 @@
 //   markers    surface circles (buoys, EONET, air quality)
 //   points     circles sized for orbit context (satellites)
 //   rings      magnitude-scaled pulsing circles (earthquakes)
+//   polygons   filled + outlined alert areas (severe weather)
 //   raster     streamed tile imagery (clouds, radar, SST)
 //   particles  animated flow field (wind)
 //
 // Fields: id, label, type, defaultActive, color, description, optional note.
+// Optional `refreshMs` overrides MapView's default 30s layer poll for sources
+// that ask to be polled gently or change slowly (e.g. NWS alert sets).
 // A note with `noteUntilData: true` is a setup hint — the ControlPanel hides
 // it once the layer's fetcher returns its first non-empty result.
 // sourceUrl / sourceLabel power the "More from source" drill-down link the
@@ -57,6 +60,22 @@ export const LAYER_REGISTRY = [
     description: 'Animated wind flow from the NOAA GFS forecast model.',
     sourceUrl: 'https://earth.nullschool.net/',
     sourceLabel: 'earth.nullschool.net',
+  },
+  {
+    id: 'severe',
+    group: 'Weather',
+    // Stylized tornado funnel — narrowing horizontal bands with a tail.
+    icon: 'M3 5h18 M6 9h12 M9 13h8 M12 13c0 4-1 6-3 8',
+    label: 'US Severe Weather',
+    type: 'polygons',
+    defaultActive: false,
+    color: '#f87171',
+    description: 'Active tornado, severe-thunderstorm, and flash-flood alerts (NWS).',
+    // NWS asks API clients to be gentle and alert sets don't change second-to-
+    // second, so this layer polls slower than the default 30s cadence.
+    refreshMs: 120_000,
+    sourceUrl: 'https://www.spc.noaa.gov/',
+    sourceLabel: 'Storm Prediction Center',
   },
   {
     id: 'sst',
@@ -168,7 +187,7 @@ export const LAYER_BY_ID = LAYER_REGISTRY.reduce((acc, layer) => {
 // exactly equals the preset — intentional: hand-toggling after a preset
 // deselects the chip; presets are shortcuts, not modes.
 export const LAYER_PRESETS = [
-  { id: 'storm',    label: 'Storm watch', layers: ['radar', 'wind', 'clouds', 'mountains'] },
+  { id: 'storm',    label: 'Storm watch', layers: ['radar', 'wind', 'clouds', 'mountains', 'severe'] },
   { id: 'ocean',    label: 'Ocean',       layers: ['sst', 'buoys'] },
   { id: 'aviation', label: 'Aviation',    layers: ['flights', 'wind', 'clouds'] },
   { id: 'clear',    label: 'Clear',       layers: [] },
@@ -178,3 +197,6 @@ export const LAYER_PRESETS = [
 export const RASTER_TYPES = new Set(['raster']);
 export const PARTICLE_TYPES = new Set(['particles']);
 export const VECTOR_TYPES = new Set(['aircraft', 'markers', 'points', 'rings']);
+// Filled alert-area layers, drawn in their own channel between the rasters and
+// the marker/aircraft layers.
+export const POLYGON_TYPES = new Set(['polygons']);

@@ -1,5 +1,6 @@
 import * as satellite from 'satellite.js';
 import { fetchMountainSnow } from './snowData';
+import { fetchSevereEntities } from './severeData';
 
 // Convert any fetcher's normalized entities into a MapLibre-ready GeoJSON
 // FeatureCollection. Styling-relevant fields are promoted to top-level
@@ -23,6 +24,28 @@ export function entitiesToGeoJSON(entities) {
           value: Number(e.meta?.pm25 ?? e.meta?.value) || 0,
           altitude_km: Number.isFinite(e.altitude_km) ? e.altitude_km : 0,
           alertLevel: Number.isFinite(e.alertLevel) ? e.alertLevel : 0,
+          _entity: JSON.stringify(e),
+        },
+      })),
+  };
+}
+
+// Polygon companion to entitiesToGeoJSON for entities that carry a raw GeoJSON
+// `geometry` (the severe-weather alerts). Mirrors the marker channel so the
+// click handler is shared: `event` is promoted for the data-driven fill paint,
+// and the full entity is serialized under `_entity` so a click can rebuild it.
+export function polygonsToGeoJSON(entities) {
+  return {
+    type: 'FeatureCollection',
+    features: (entities || [])
+      .filter((e) => e && e.geometry)
+      .map((e) => ({
+        type: 'Feature',
+        geometry: e.geometry,
+        properties: {
+          id: e.id,
+          layer: e.layer,
+          event: e.meta?.event ?? '',
           _entity: JSON.stringify(e),
         },
       })),
@@ -608,4 +631,5 @@ export const LAYER_FETCHERS = {
   satellites: fetchLiveSatellites,
   airquality: fetchLiveAirQuality,
   mountains: fetchMountainSnow,
+  severe: fetchSevereEntities,
 };

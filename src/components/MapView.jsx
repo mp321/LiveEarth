@@ -7,8 +7,13 @@ import {
   LAYER_REGISTRY,
   LAYER_BY_ID,
   VECTOR_TYPES,
+  POLYGON_TYPES,
 } from '../state/layerRegistry';
-import { LAYER_FETCHERS, entitiesToGeoJSON } from '../services/globalStreams';
+import {
+  LAYER_FETCHERS,
+  entitiesToGeoJSON,
+  polygonsToGeoJSON,
+} from '../services/globalStreams';
 import {
   BASE_IMAGERY,
   DEFAULT_BASE,
@@ -37,6 +42,19 @@ const QUAKE_COLOR = [
 const AQ_COLOR = [
   'interpolate', ['linear'], ['get', 'value'],
   0, '#a3e635', 12, '#fde047', 35, '#fb923c', 55, '#ef4444', 150, '#a21caf',
+];
+// Severe-weather fill/outline color keyed by `event`, NOT severity: the public
+// maps people recognize use a fixed color per product (red tornado warning,
+// orange thunderstorm, green flash flood), and NWS severity values don't map
+// onto those expectations. Fallback (last value) is the layer's own color.
+const SEVERE_COLOR = [
+  'match', ['get', 'event'],
+  'Tornado Warning', '#ef4444',
+  'Tornado Watch', '#fbbf24',
+  'Severe Thunderstorm Warning', '#f97316',
+  'Severe Thunderstorm Watch', '#fde047',
+  'Flash Flood Warning', '#16a34a',
+  '#f87171',
 ];
 
 const srcId = (id) => `src-${id}`;
@@ -218,19 +236,26 @@ export default function MapView() {
     map.addLayer({ id: 'base', type: 'raster', source: 'base' }, above?.id);
   }
 
-  // Insert raster imagery just above the background, below any data layers.
-  // Companion layers (-halo, -pulse) resolve to their parent's registry entry
-  // so rasters can't slot in between a marker and its halo.
-  function firstAbove() {
+  // Id of the first style layer whose base registry type is in `types`, used as
+  // the `beforeId` anchor when inserting a new layer beneath a channel.
+  // Companion layers (-halo, -pulse, -line) resolve to their parent's registry
+  // entry so an insert can't slot in between a feature and its companion.
+  function firstLayerOfTypes(types) {
     const map = mapRef.current;
     const layers = map.getStyle().layers || [];
     const first = layers.find((l) => {
       if (!l.id.startsWith(lyrId(''))) return false;
-      const baseId = l.id.slice(4).replace(/-(halo|pulse)$/, '');
-      return VECTOR_TYPES.has(LAYER_BY_ID[baseId]?.type);
+      const baseId = l.id.slice(4).replace(/-(halo|pulse|line)$/, '');
+      return types.has(LAYER_BY_ID[baseId]?.type);
     });
     return first?.id;
   }
+
+  // Rasters sit at the bottom of the data stack: below every polygon AND vector
+  // layer. Polygons sit between — above rasters, below the markers/aircraft.
+  const RASTER_BELOW = new Set([...VECTOR_TYPES, ...POLYGON_TYPES]);
+  const firstAbove = () => firstLayerOfTypes(RASTER_BELOW);
+  const firstVectorAbove = () => firstLayerOfTypes(VECTOR_TYPES);
 
   // --- reconcile active layers -------------------------------------------------
   function syncLayers(active) {
@@ -238,6 +263,7 @@ export default function MapView() {
     LAYER_REGISTRY.forEach((layer) => {
       const on = active.has(layer.id);
       if (VECTOR_TYPES.has(layer.type)) (on ? ensureVector : dropVector)(layer);
+      else if (POLYGON_TYPES.has(layer.type)) (on ? ensurePolygons : dropPolygons)(layer);
       else if (layer.type === 'raster') (on ? ensureRaster : dropRaster)(layer);
       else if (layer.type === 'particles') (on ? ensureWind : dropWind)(layer);
     });
@@ -257,7 +283,7 @@ export default function MapView() {
         if (s) s.setData(entitiesToGeoJSON(entities));
       };
       load();
-      pollers.current[layer.id] = setInterval(load, REFRESH_MS);
+      pollers.current[layer.id] = setInterval(load, layer.refreshMs ?? REFRESH_MS);
     }
   }
 
@@ -350,6 +376,58 @@ export default function MapView() {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
+  }
+
+  // --- polygons channel (filled alert areas, e.g. severe weather) -------------
+  function ensurePolygons(layer) {
+    const map = mapRef.current;
+    const sid = srcId(layer.id);
+    if (!map.getSource(sid)) map.addSource(sid, { type: 'geojson', data: EMPTY_FC });
+    if (!map.getLayer(lyrId(layer.id))) addPolygonLayer(layer);
+    // Only the fill is clickable (the shared click handler reads _entity) — the
+    // outline is decorative, so it stays out of the interactive set.
+    interactive.current.add(lyrId(layer.id));
+    if (!pollers.current[layer.id]) {
+      const load = async () => {
+        const entities = await LAYER_FETCHERS[layer.id]();
+        reportLayerCount(layer.id, entities.length);
+        const s = map.getSource(sid);
+        if (s) s.setData(polygonsToGeoJSON(entities));
+      };
+      load();
+      pollers.current[layer.id] = setInterval(load, layer.refreshMs ?? REFRESH_MS);
+    }
+  }
+
+  function addPolygonLayer(layer) {
+    const map = mapRef.current;
+    const id = lyrId(layer.id);
+    const source = srcId(layer.id);
+    // Insert below the marker/aircraft layers but above the rasters.
+    const before = firstVectorAbove();
+    map.addLayer(
+      { id, source, type: 'fill', paint: { 'fill-color': SEVERE_COLOR, 'fill-opacity': 0.18 } },
+      before
+    );
+    map.addLayer(
+      {
+        id: `${id}-line`, source, type: 'line',
+        paint: { 'line-color': SEVERE_COLOR, 'line-width': 1.5 },
+      },
+      before
+    );
+  }
+
+  function dropPolygons(layer) {
+    const map = mapRef.current;
+    if (!map) return;
+    clearInterval(pollers.current[layer.id]);
+    delete pollers.current[layer.id];
+    interactive.current.delete(lyrId(layer.id));
+    [lyrId(layer.id), `${lyrId(layer.id)}-line`].forEach((id) => {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+    if (map.getSource(srcId(layer.id))) map.removeSource(srcId(layer.id));
   }
 
   // Pulsing ring overlay for earthquakes.
