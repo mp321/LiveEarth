@@ -24,6 +24,11 @@ export function entitiesToGeoJSON(entities) {
           value: Number(e.meta?.pm25 ?? e.meta?.value) || 0,
           altitude_km: Number.isFinite(e.altitude_km) ? e.altitude_km : 0,
           alertLevel: Number.isFinite(e.alertLevel) ? e.alertLevel : 0,
+          // Buoy swell channels promoted for the data-driven circle paint
+          // (expressions can only read top-level props). 0 for non-buoys.
+          swell_period: Number(e.meta?.swell_period_s) || 0,
+          swell_energy: Number(e.meta?.swell_energy_kwm) || 0,
+          wave_height: Number(e.meta?.wave_height_ft) || 0,
           _entity: JSON.stringify(e),
         },
       })),
@@ -290,11 +295,21 @@ export function parseNdbcLatestObs(text) {
   const idxLat = col('LAT');
   const idxLon = col('LON');
   const idxWspd = col('WSPD');
-  const idxWvht = col('WVHT');
-  const idxDpd = col('DPD');
+  const idxWvht = col('WVHT'); // combined significant wave height (m)
+  const idxDpd = col('DPD'); // dominant period of the combined sea (s)
+  const idxMwd = col('MWD'); // mean/dominant wave direction (degT)
   const idxWtmp = col('WTMP');
   const idxAtmp = col('ATMP');
   const idxPres = col('PRES');
+  // Spectral swell partition — present only in NDBC's spectral summary feed.
+  // SwH/SwP/SwD describe the PRIMARY (dominant) swell train; WWH/WWP/WWD the
+  // SECONDARY locally-generated wind waves (chop). Absent (-1) on the standard
+  // met feed, in which case we fall back to the combined WVHT/DPD below.
+  const idxSwH = col('SwH');
+  const idxSwP = col('SwP');
+  const idxSwD = col('SwD');
+  const idxWWH = col('WWH');
+  const idxWWP = col('WWP');
 
   const num = (v) => {
     const n = Number.parseFloat(v);
@@ -311,23 +326,51 @@ export function parseNdbcLatestObs(text) {
     .map((line) => line.trim().split(/\s+/))
     .filter((parts) => num(parts[idxLat]) != null && num(parts[idxLon]) != null)
     .slice(0, 800) // cap for render performance
-    .map((parts) => ({
-      id: parts[idxStn],
-      lat: num(parts[idxLat]),
-      lng: num(parts[idxLon]),
-      label: `Buoy ${parts[idxStn]}`,
-      layer: 'buoys',
-      meta: {
-        station: parts[idxStn],
-        wind_speed_mph: idxWspd > -1 ? msToMph(num(parts[idxWspd])) : null,
-        wave_height_ft: idxWvht > -1 ? mToFt(num(parts[idxWvht])) : null,
-        wave_period_s: idxDpd > -1 ? num(parts[idxDpd]) : null,
-        water_temp_f: idxWtmp > -1 ? cToF(num(parts[idxWtmp])) : null,
-        air_temp_f: idxAtmp > -1 ? cToF(num(parts[idxAtmp])) : null,
-        pressure_hpa: idxPres > -1 ? num(parts[idxPres]) : null,
-        status: 'Reporting',
-      },
-    }));
+    .map((parts) => {
+      // Primary (dominant) swell: prefer the spectral swell partition, else the
+      // combined significant wave height / dominant period from the met feed.
+      const swH = idxSwH > -1 ? num(parts[idxSwH]) : null; // meters
+      const swP = idxSwP > -1 ? num(parts[idxSwP]) : null; // seconds
+      const primaryH = swH ?? (idxWvht > -1 ? num(parts[idxWvht]) : null);
+      const primaryT = swP ?? (idxDpd > -1 ? num(parts[idxDpd]) : null);
+      // Secondary partition: locally-generated wind waves / chop (spectral feed).
+      const windWaveH = idxWWH > -1 ? num(parts[idxWWH]) : null;
+      const windWaveT = idxWWP > -1 ? num(parts[idxWWP]) : null;
+      // Swell energy = deep-water wave-power flux P ≈ (ρg²/64π)·H²·T ≈ 0.49·H²·T
+      // kW/m (H in m, T in s). Power scales with H² and group speed (∝ T), so
+      // H²·T is the accurate energy signal — long-period groundswell reads hot
+      // even at modest heights, short wind chop stays cool.
+      const swellEnergy =
+        primaryH != null && primaryT != null
+          ? Number((0.49 * primaryH * primaryH * primaryT).toFixed(1))
+          : null;
+      return {
+        id: parts[idxStn],
+        lat: num(parts[idxLat]),
+        lng: num(parts[idxLon]),
+        label: `Buoy ${parts[idxStn]}`,
+        layer: 'buoys',
+        meta: {
+          station: parts[idxStn],
+          wind_speed_mph: idxWspd > -1 ? msToMph(num(parts[idxWspd])) : null,
+          // Headline wave state is the PRIMARY swell (imperial for the sidebar).
+          wave_height_ft: mToFt(primaryH),
+          swell_period_s: primaryT,
+          swell_dir_deg:
+            (idxSwD > -1 ? num(parts[idxSwD]) : null) ??
+            (idxMwd > -1 ? num(parts[idxMwd]) : null),
+          swell_energy_kwm: swellEnergy,
+          // Secondary wind-wave partition, only when the spectral feed has it.
+          wind_wave_height_ft: mToFt(windWaveH),
+          wind_wave_period_s: windWaveT,
+          wave_period_s: primaryT, // retained for existing readouts
+          water_temp_f: idxWtmp > -1 ? cToF(num(parts[idxWtmp])) : null,
+          air_temp_f: idxAtmp > -1 ? cToF(num(parts[idxAtmp])) : null,
+          pressure_hpa: idxPres > -1 ? num(parts[idxPres]) : null,
+          status: 'Reporting',
+        },
+      };
+    });
 }
 
 /**

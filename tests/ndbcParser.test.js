@@ -50,6 +50,37 @@ describe('parseNdbcLatestObs', () => {
     expect(m.wave_height_ft).toBeCloseTo(2.8 * 3.28084, 2);
   });
 
+  it('computes swell energy from the primary swell (0.49·H²·T kW/m)', () => {
+    const m = parseNdbcLatestObs(FIXTURE)[0].meta; // WVHT 1.5 m, DPD 9.0 s
+    expect(m.swell_period_s).toBe(9.0);
+    expect(m.swell_energy_kwm).toBeCloseTo(0.49 * 1.5 * 1.5 * 9.0, 1); // ≈ 9.9
+  });
+
+  it('falls back to combined sea when the spectral partition is absent', () => {
+    const m = parseNdbcLatestObs(FIXTURE)[0].meta;
+    // No SwH/WWH columns -> primary = WVHT/DPD, no secondary wind-wave split.
+    expect(m.wave_height_ft).toBeCloseTo(1.5 * 3.28084, 2);
+    expect(m.wind_wave_height_ft).toBeNull();
+    expect(m.wind_wave_period_s).toBeNull();
+  });
+
+  it('separates primary swell from secondary wind waves on the spectral feed', () => {
+    const SPEC =
+      '#STN     LAT      LON  YYYY MM DD hh mm  WVHT  SwH  SwP  WWH  WWP   SwD  WWD STEEPNESS  APD  MWD\n' +
+      '#text    deg      deg  yr  mo dy hr mn     m    m  sec    m  sec  degT degT     -       sec degT\n' +
+      '46059  38.094 -129.951 2026 06 13 10 50  2.8  2.5 14.0  1.0  5.0   290  300 AVERAGE  7.0  285\n';
+    const m = parseNdbcLatestObs(SPEC)[0].meta;
+    // Primary = dominant swell (SwH/SwP), NOT the combined WVHT.
+    expect(m.wave_height_ft).toBeCloseTo(2.5 * 3.28084, 2);
+    expect(m.swell_period_s).toBe(14.0);
+    expect(m.swell_dir_deg).toBe(290);
+    // Secondary = wind chop.
+    expect(m.wind_wave_height_ft).toBeCloseTo(1.0 * 3.28084, 2);
+    expect(m.wind_wave_period_s).toBe(5.0);
+    // Energy is driven by the long-period primary swell.
+    expect(m.swell_energy_kwm).toBeCloseTo(0.49 * 2.5 * 2.5 * 14.0, 1); // ≈ 42.9
+  });
+
   it('caps the result set at 800 stations', () => {
     const rows = Array.from(
       { length: 810 },

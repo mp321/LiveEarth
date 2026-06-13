@@ -153,6 +153,18 @@ export const LAYER_REGISTRY = [
     sourceLabel: 'NASA EONET',
   },
   {
+    id: 'currents',
+    group: 'Ocean & Water',
+    icon: 'M3 7c2.5 2 4.5 2 7 0s4.5-2 7 0 M3 12c2.5 2 4.5 2 7 0s4.5-2 7 0 M3 17c2.5 2 4.5 2 7 0s4.5-2 7 0',
+    label: 'Ocean Surface Currents',
+    type: 'currents',
+    defaultActive: false,
+    color: '#22d3ee',
+    description: 'Animated global surface-current flow (NOAA RTOFS via Open-Meteo Marine).',
+    sourceUrl: 'https://polar.ncep.noaa.gov/global/',
+    sourceLabel: 'NOAA RTOFS',
+  },
+  {
     id: 'buoys',
     group: 'Ocean & Water',
     icon: 'M12 22V8 M5 12H2a10 10 0 0 0 20 0h-3 M12 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
@@ -188,7 +200,7 @@ export const LAYER_BY_ID = LAYER_REGISTRY.reduce((acc, layer) => {
 // deselects the chip; presets are shortcuts, not modes.
 export const LAYER_PRESETS = [
   { id: 'storm',    label: 'Storm watch', layers: ['radar', 'wind', 'clouds', 'mountains', 'severe'] },
-  { id: 'ocean',    label: 'Ocean',       layers: ['sst', 'buoys'] },
+  { id: 'ocean',    label: 'Ocean',       layers: ['sst', 'currents', 'buoys'] },
   { id: 'aviation', label: 'Aviation',    layers: ['flights', 'wind', 'clouds'] },
   { id: 'clear',    label: 'Clear',       layers: [] },
 ];

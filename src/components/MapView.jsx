@@ -22,6 +22,7 @@ import {
   fetchRadarFrames,
 } from '../services/rasterSources';
 import { loadWindData } from '../services/windData';
+import { loadCurrentsData } from '../services/currentsData';
 import { useAppContext } from '../state/AppContext';
 import { INITIAL_VIEW, publishViewState } from '../state/urlState';
 
@@ -42,6 +43,20 @@ const QUAKE_COLOR = [
 const AQ_COLOR = [
   'interpolate', ['linear'], ['get', 'value'],
   0, '#a3e635', 12, '#fde047', 35, '#fb923c', 55, '#ef4444', 150, '#a21caf',
+];
+// Buoys are styled off the swell channels promoted in entitiesToGeoJSON.
+// Color encodes dominant swell PERIOD: cool blues for short wind chop (<8s)
+// through hot reds for long-period groundswell (>14s).
+const BUOY_COLOR = [
+  'interpolate', ['linear'], ['get', 'swell_period'],
+  6, '#3b82f6', 8, '#22d3ee', 11, '#67e8f9', 13, '#facc15', 14, '#fb923c', 16, '#ef4444',
+];
+// Radius encodes swell ENERGY (wave-power kW/m). interpolate clamps the long
+// tail so a few high-energy stations don't blow out the scale; a 0/missing
+// reading still shows a small legible dot.
+const BUOY_RADIUS = [
+  'interpolate', ['linear'], ['get', 'swell_energy'],
+  0, 3, 5, 5, 20, 8, 50, 12, 100, 16,
 ];
 // Severe-weather fill/outline color keyed by `event`, NOT severity: the public
 // maps people recognize use a fixed color per product (red tornado warning,
@@ -124,6 +139,7 @@ export default function MapView() {
   const pollers = useRef({}); // layerId -> interval id
   const rafRef = useRef(null); // earthquake pulse loop
   const overlayRef = useRef(null); // deck.gl overlay hosting the wind particles
+  const currentsOverlayRef = useRef(null); // separate INTERLEAVED overlay for ocean currents
   const windLibsRef = useRef(null); // cached dynamic-import promise (deck.gl + weatherlayers)
   const interactive = useRef(new Set()); // clickable vector layer ids
   const activeRef = useRef(activeLayers);
@@ -266,6 +282,7 @@ export default function MapView() {
       else if (POLYGON_TYPES.has(layer.type)) (on ? ensurePolygons : dropPolygons)(layer);
       else if (layer.type === 'raster') (on ? ensureRaster : dropRaster)(layer);
       else if (layer.type === 'particles') (on ? ensureWind : dropWind)(layer);
+      else if (layer.type === 'currents') (on ? ensureCurrents : dropCurrents)(layer);
     });
   }
 
@@ -345,6 +362,23 @@ export default function MapView() {
           'icon-image': ['match', ['get', 'alertLevel'], 1, 'mtn-1', 2, 'mtn-2', 'mtn-0'],
           'icon-size': ['step', ['get', 'alertLevel'], 0.5, 1, 0.62, 2, 0.74],
           'icon-allow-overlap': true,
+        },
+      });
+      return;
+    }
+    if (layer.id === 'buoys') {
+      // Swell-styled markers: color by period, radius by energy. A subtle light
+      // outline keeps the dark-mode aesthetic while lifting the dots cleanly off
+      // the underlying ocean-currents flow field.
+      map.addLayer({
+        id, source, type: 'circle',
+        paint: {
+          'circle-radius': BUOY_RADIUS,
+          'circle-color': BUOY_COLOR,
+          'circle-opacity': 0.92,
+          'circle-stroke-color': '#e2e8f0',
+          'circle-stroke-width': 0.8,
+          'circle-stroke-opacity': 0.35,
         },
       });
       return;
@@ -551,6 +585,70 @@ export default function MapView() {
 
   function dropWind() {
     if (overlayRef.current) overlayRef.current.setProps({ layers: [] });
+  }
+
+  // --- ocean currents (deck.gl flow field, beneath the buoy markers) ----------
+  async function ensureCurrents() {
+    const map = mapRef.current;
+    // Reuse the wind stack's cached dynamic import (same deck.gl + weatherlayers
+    // bundle) so toggling currents doesn't pull a second heavy chunk.
+    windLibsRef.current ??= Promise.all([
+      import('@deck.gl/mapbox'),
+      import('weatherlayers-gl'),
+    ]);
+    const [{ MapboxOverlay }, { ParticleLayer, ImageType, ImageInterpolation }] =
+      await windLibsRef.current;
+    const currents = await loadCurrentsData();
+    // Bail if the layer was toggled off (or the map torn down) while loading.
+    if (!mapRef.current || !activeRef.current.has('currents')) return;
+    // Z-ORDERING: this overlay is INTERLEAVED (unlike the wind overlay, which is
+    // non-interleaved and rides on top of everything), so its layers composite
+    // INTO the MapLibre stack. Anchoring with `beforeId` to the first vector/
+    // marker layer guarantees the currents draw UNDER the buoy markers (and
+    // every other marker), above the imagery. When NO marker layer is active,
+    // beforeId must be undefined (top of the stack) — anchoring to 'base' here
+    // would slot the flow field BENEATH the basemap and hide it entirely.
+    if (!currentsOverlayRef.current) {
+      currentsOverlayRef.current = new MapboxOverlay({ interleaved: true, layers: [] });
+      map.addControl(currentsOverlayRef.current);
+    }
+    const beforeId = firstVectorAbove(); // undefined => render on top of imagery
+    currentsOverlayRef.current.setProps({
+      layers: [
+        new ParticleLayer({
+          id: 'ocean-currents',
+          beforeId, // strict ordering anchor — keeps the flow field below buoys
+          image: currents.image,
+          imageType: ImageType.VECTOR,
+          imageUnscale: currents.imageUnscale,
+          bounds: currents.bounds,
+          imageInterpolation: ImageInterpolation.CUBIC,
+          // Distinct from wind: a slow, languid drift in a cool cyan→aqua→white
+          // ocean palette so the two flow fields never read as the same thing.
+          // Surface currents run ~0.1–0.5 m/s — an order of magnitude slower than
+          // wind — so a HIGH speedFactor still looks calm relative to the wind
+          // layer, and the palette must START bright (most currents are slow)
+          // to stay legible over the dark ocean basemap.
+          numParticles: 5000,
+          maxAge: 200,
+          speedFactor: 22.0,
+          width: 2.5,
+          parameters: { depthTest: true, depthMask: false },
+          palette: [
+            [0, '#22d3ee'],
+            [0.4, '#67e8f9'],
+            [1.0, '#5eead4'],
+            [2.0, '#a7f3d0'],
+            [3.0, '#ecfeff'],
+          ],
+          opacity: 0.75,
+        }),
+      ],
+    });
+  }
+
+  function dropCurrents() {
+    if (currentsOverlayRef.current) currentsOverlayRef.current.setProps({ layers: [] });
   }
 
   // --- react to context changes ------------------------------------------------
