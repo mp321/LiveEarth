@@ -9,6 +9,7 @@ import {
 import { LAYER_REGISTRY, LAYER_BY_ID } from './layerRegistry';
 import { BASE_IMAGERY, DEFAULT_BASE } from '../services/rasterSources';
 import { flightRouteUrl, fetchAirport } from '../services/globalStreams';
+import { fetchTideStrip } from '../services/tideData';
 import { fetchMountainAlerts } from '../services/snowData';
 import { fetchSevereAlertFeed } from '../services/severeData';
 import { INITIAL_VIEW, publishViewState } from './urlState';
@@ -203,6 +204,45 @@ export function AppProvider({ children }) {
     };
   }, [selectedEntity]);
 
+  // When a buoy is selected, resolve its tide strip (nearest NOAA CO-OPS tide
+  // station -> hi/lo + curve + now + trend). Lazy per-selection lookup cloned
+  // from selectedRoute above: not part of the bulk buoy poll. A fetcher that
+  // already attached `meta.tideStrip` short-circuits the network call.
+  const [selectedTide, setSelectedTide] = useState(null);
+
+  useEffect(() => {
+    const isBuoy = selectedEntity?.layer === 'buoys';
+    const buoyId = selectedEntity?.meta?.station || selectedEntity?.id;
+    const { lat, lng } = selectedEntity ?? {};
+    if (
+      !isBuoy ||
+      selectedEntity?.meta?.tideStrip ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng)
+    ) {
+      setSelectedTide(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedTide({ status: 'loading', buoyId, data: null });
+
+    (async () => {
+      try {
+        const data = await fetchTideStrip(lat, lng, buoyId);
+        if (cancelled) return;
+        // null = offshore/unavailable -> render no tide UI (not an error).
+        setSelectedTide({ status: data ? 'ok' : 'none', buoyId, data });
+      } catch {
+        if (!cancelled) setSelectedTide({ status: 'none', buoyId, data: null });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEntity]);
+
   const value = useMemo(
     () => ({
       activeLayers,
@@ -212,6 +252,7 @@ export function AppProvider({ children }) {
       selectedEntity,
       selectEntity,
       selectedRoute,
+      selectedTide,
       baseLayer,
       setBaseLayer,
       radarStatus,
@@ -231,6 +272,7 @@ export function AppProvider({ children }) {
       selectedEntity,
       selectEntity,
       selectedRoute,
+      selectedTide,
       baseLayer,
       radarStatus,
       layerCounts,

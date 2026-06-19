@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { LAYER_BY_ID } from '../state/layerRegistry';
 import { useAppContext } from '../state/AppContext';
 import { sourceLinkForEntity } from '../services/sourceLinks';
+import TideStrip from './TideStrip';
 
 // -----------------------------------------------------------------------------
 // TelemetrySidebar
@@ -57,7 +58,7 @@ function AirportLine({ role, ap }) {
 }
 
 export default function TelemetrySidebar() {
-  const { selectedEntity, selectEntity, selectedRoute } = useAppContext();
+  const { selectedEntity, selectEntity, selectedRoute, selectedTide } = useAppContext();
   const open = Boolean(selectedEntity);
   const layer = selectedEntity ? LAYER_BY_ID[selectedEntity.layer] : null;
 
@@ -67,6 +68,15 @@ export default function TelemetrySidebar() {
   // flight — otherwise show the loading state rather than a stale route.
   const route =
     selectedRoute && selectedRoute.callsign === callsign ? selectedRoute : null;
+
+  // Tide strip: a fetcher-supplied meta.tideStrip wins; otherwise use the lazily
+  // resolved strip, but only when it belongs to the currently selected buoy.
+  const buoyId = selectedEntity?.meta?.station || selectedEntity?.id;
+  const tideFromMeta = selectedEntity?.meta?.tideStrip ?? null;
+  const tideState =
+    !tideFromMeta && selectedTide && selectedTide.buoyId === buoyId ? selectedTide : null;
+  const tideStrip = tideFromMeta ?? (tideState?.status === 'ok' ? tideState.data : null);
+  const tideLoading = tideState?.status === 'loading';
 
   // Drill-down link to this specific entity's page on its source (USGS event,
   // N2YO track, airplanes.live hex, …); null for layers without a per-item page.
@@ -220,14 +230,31 @@ export default function TelemetrySidebar() {
               </section>
             )}
 
+            {/* Tide predictions (coastal buoys — lazily resolved on selection).
+                Renders nothing for an offshore buoy ('none'); a brief note while
+                resolving. The strip itself is a generic, reusable SVG slot. */}
+            {(tideStrip || tideLoading) && (
+              <section className="mb-4 rounded-xl bg-white/[0.03] p-3">
+                <p className="mb-2 text-[11px] uppercase tracking-wider text-slate-400">
+                  Predictions
+                </p>
+                {tideLoading ? (
+                  <p className="text-sm text-slate-400">Resolving tide…</p>
+                ) : (
+                  <TideStrip strip={tideStrip} />
+                )}
+              </section>
+            )}
+
             {/* Operational metrics — generic over entity.meta. Keys starting
-                with `_` are structured extensions (e.g. _links), not metrics. */}
+                with `_` are structured extensions (e.g. _links), not metrics;
+                tideStrip is rendered by its own section above, not as a metric. */}
             <section>
               <p className="mb-1 text-[11px] uppercase tracking-wider text-slate-400">
                 Operational Metrics
               </p>
               {Object.entries(selectedEntity.meta ?? {})
-                .filter(([key]) => !key.startsWith('_'))
+                .filter(([key]) => !key.startsWith('_') && key !== 'tideStrip')
                 .map(([key, value]) => (
                   <MetricRow
                     key={key}
