@@ -123,6 +123,98 @@ function makeMountainIcon({ fill, outline }) {
   return ctx.getImageData(0, 0, S, S);
 }
 
+// Satellite icon recolored per orbital-population kind — the glyph is identical,
+// COLOR is the only type signal (mirrors the plane-kind icons). Kind is set in
+// globalStreams' classifySatellite and promoted to `kind` by entitiesToGeoJSON.
+const SAT_KINDS = {
+  starlink: '#38bdf8',
+  oneweb: '#818cf8',
+  station: '#f472b6',
+  nav: '#fbbf24',
+  weather: '#34d399',
+  other: '#a78bfa',
+};
+
+function makeSatelliteIcon(color) {
+  const S = 44;
+  const c = document.createElement('canvas');
+  c.width = S;
+  c.height = S;
+  const ctx = c.getContext('2d');
+  ctx.translate(S / 2, S / 2);
+  ctx.scale(S / 24, S / 24); // draw in a 24-unit space centered on the origin
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = 'rgba(0,0,0,0.85)';
+  ctx.shadowBlur = 2; // dark halo so the glyph reads on bright imagery
+  // Booms out to the solar-panel wings.
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-3.5, 0); ctx.lineTo(-6, 0);
+  ctx.moveTo(3.5, 0); ctx.lineTo(6, 0);
+  ctx.stroke();
+  // Solar panels (filled wings).
+  ctx.fillStyle = color;
+  ctx.fillRect(-10, -3.2, 4, 6.4);
+  ctx.fillRect(6, -3.2, 4, 6.4);
+  // Body — dark core with a colored outline so it pops against the panels.
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(-3.2, -3.6, 6.4, 7.2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.strokeRect(-3.2, -3.6, 6.4, 7.2);
+  // Dish antenna.
+  ctx.beginPath();
+  ctx.moveTo(0, -3.6); ctx.lineTo(0, -5.6);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, -6, 1.6, 0, Math.PI, true);
+  ctx.fillStyle = color;
+  ctx.fill();
+  return ctx.getImageData(0, 0, S, S);
+}
+
+// EONET event icons: a recognizable emoji on a severity-colored disc. Red discs
+// (+ slightly larger via icon-size below) flag the highest-danger categories;
+// cooler discs the rest. Color is by CATEGORY — see classifyEonet() for why.
+const EVENT_KINDS = {
+  wildfire: { emoji: '🔥', disc: '#dc2626' },
+  volcano: { emoji: '🌋', disc: '#dc2626' },
+  storm: { emoji: '🌀', disc: '#e11d48' },
+  flood: { emoji: '🌊', disc: '#0284c7' },
+  ice: { emoji: '❄️', disc: '#38bdf8' },
+  dust: { emoji: '🌫️', disc: '#d97706' },
+  event: { emoji: '⚠️', disc: '#f59e0b' },
+};
+
+function makeEmojiIcon(emoji, disc) {
+  const S = 44;
+  const c = document.createElement('canvas');
+  c.width = S;
+  c.height = S;
+  const ctx = c.getContext('2d');
+  // Severity-colored backing disc so the category color reads even where the
+  // emoji glyph is busy, with a soft shadow + light separating ring.
+  ctx.beginPath();
+  ctx.arc(S / 2, S / 2, S / 2 - 5, 0, Math.PI * 2);
+  ctx.fillStyle = disc;
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 4;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.stroke();
+  // System emoji fonts render in color on every platform we target; a Linux box
+  // without one degrades to a monochrome glyph on the disc, still a legible marker.
+  ctx.font = '22px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, S / 2, S / 2 + 1);
+  return ctx.getImageData(0, 0, S, S);
+}
+
 export default function MapView() {
   const {
     activeLayers,
@@ -205,6 +297,14 @@ export default function MapView() {
       });
       Object.entries(MTN_VARIANTS).forEach(([name, colors]) => {
         if (!map.hasImage(name)) map.addImage(name, makeMountainIcon(colors));
+      });
+      Object.entries(SAT_KINDS).forEach(([kind, color]) => {
+        const name = `sat-${kind}`;
+        if (!map.hasImage(name)) map.addImage(name, makeSatelliteIcon(color));
+      });
+      Object.entries(EVENT_KINDS).forEach(([kind, { emoji, disc }]) => {
+        const name = `evt-${kind}`;
+        if (!map.hasImage(name)) map.addImage(name, makeEmojiIcon(emoji, disc));
       });
       readyRef.current = true;
       syncLayers(activeRef.current);
@@ -379,6 +479,38 @@ export default function MapView() {
           'circle-stroke-color': '#e2e8f0',
           'circle-stroke-width': 0.8,
           'circle-stroke-opacity': 0.35,
+        },
+      });
+      return;
+    }
+    if (layer.id === 'satellites') {
+      // Type-colored satellite icons (`kind` set by classifySatellite, promoted
+      // by entitiesToGeoJSON). Small — the set is dense — with crewed stations
+      // bumped up a touch since they're the headline objects.
+      map.addLayer({
+        id, source, type: 'symbol',
+        layout: {
+          'icon-image': ['match', ['get', 'kind'],
+            'starlink', 'sat-starlink', 'oneweb', 'sat-oneweb', 'station', 'sat-station',
+            'nav', 'sat-nav', 'weather', 'sat-weather', 'sat-other'],
+          'icon-size': ['match', ['get', 'kind'], 'station', 0.6, 0.46],
+          'icon-allow-overlap': true,
+        },
+      });
+      return;
+    }
+    if (layer.id === 'eonet') {
+      // Emoji-on-disc event markers; the red high-danger kinds render slightly
+      // larger so severity reads as "bigger + hotter" (see classifyEonet).
+      map.addLayer({
+        id, source, type: 'symbol',
+        layout: {
+          'icon-image': ['match', ['get', 'kind'],
+            'wildfire', 'evt-wildfire', 'volcano', 'evt-volcano', 'storm', 'evt-storm',
+            'flood', 'evt-flood', 'ice', 'evt-ice', 'dust', 'evt-dust', 'evt-event'],
+          'icon-size': ['match', ['get', 'kind'],
+            'wildfire', 0.62, 'volcano', 0.62, 'storm', 0.58, 0.48],
+          'icon-allow-overlap': true,
         },
       });
       return;

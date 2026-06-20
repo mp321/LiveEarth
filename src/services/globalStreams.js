@@ -147,15 +147,66 @@ const USGS_URL =
 
 // NASA EONET active natural events. CORS-enabled. `status=open` = currently
 // active events; the geometry array is chronological so its last point is the
-// event's live position.
+// event's live position. EONET is GLOBAL, so this already covers worldwide
+// major disasters — wildfires, volcanoes, severe storms, floods — with no extra
+// (less reliable) feed needed.
 const EONET_URL = 'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=200';
+
+// Map an EONET category title to an icon "kind". Severity/color is by CATEGORY,
+// not a magnitude: EONET exposes no uniform severity scalar across categories,
+// and the category itself is the reliable danger signal (wildfire/volcano/storm
+// read hot, the rest cooler). MapView keys the emoji + disc color + size off
+// this. Unmatched categories fall through to the generic 'event' marker. Pure —
+// exported for tests.
+export function classifyEonet(category) {
+  const c = (category || '').toLowerCase();
+  if (c.includes('fire')) return 'wildfire';
+  if (c.includes('volcano')) return 'volcano';
+  if (c.includes('storm') || c.includes('cyclone')) return 'storm';
+  if (c.includes('flood')) return 'flood';
+  if (c.includes('ice') || c.includes('snow')) return 'ice';
+  if (c.includes('dust') || c.includes('haze')) return 'dust';
+  return 'event';
+}
 
 // CelesTrak TLEs for active satellites, via our serverless proxy (api/tle.js)
 // so all clients share one cached upstream fetch instead of each browser
 // hitting CelesTrak's rate limiter. Positions are propagated client-side with
-// satellite.js; the feed has 15k+ objects so we cap the set.
+// satellite.js.
 const TLE_URL = '/api/tle';
-const SAT_LIMIT = 500;
+// The active set has 11k+ objects. Propagating AND rendering all of them every
+// refresh is a periodic main-thread hitch (SGP4 + JSON.stringify + setData), so
+// we render a live SAMPLE instead — the ControlPanel note plus the CelesTrak
+// "More from source" link point to the full catalog. 2000 keeps the 30s
+// re-propagation comfortably under a frame budget while still painting a dense,
+// representative orbital picture.
+const SAT_LIMIT = 2000;
+
+// Coarse satellite "kind" from the object NAME (CelesTrak's active set carries
+// no type field, but operators encode it in the name). Drives only the marker
+// COLOR — the glyph is identical across kinds — so a rough bucket is fine; a
+// miss just lands in the violet "other" pile. Order matters: the mega-
+// constellations are matched by prefix first, then crewed stations (so ISS
+// doesn't fall through to a keyword bucket), then navigation and Earth-science.
+// Pure — exported for tests.
+const SAT_TYPE_LABEL = {
+  starlink: 'Starlink (broadband)',
+  oneweb: 'OneWeb (broadband)',
+  station: 'Space station / crewed',
+  nav: 'Navigation / GNSS',
+  weather: 'Weather / Earth observation',
+  other: 'Comms / other',
+};
+
+export function classifySatellite(name) {
+  const n = (name || '').toUpperCase();
+  if (n.startsWith('STARLINK')) return 'starlink';
+  if (n.startsWith('ONEWEB')) return 'oneweb';
+  if (/ISS|ZARYA|TIANGONG|TIANHE|PROGRESS|SOYUZ|CYGNUS|TIANZHOU|CREW DRAGON|CSS \(/.test(n)) return 'station';
+  if (/GPS|NAVSTAR|GLONASS|GALILEO|BEIDOU|\bGSAT\b|\bQZS\b|IRNSS/.test(n)) return 'nav';
+  if (/NOAA|GOES|METEOR|METOP|HIMAWARI|DMSP|FENGYUN|\bFY-|JPSS|SUOMI|TERRA|AQUA|SENTINEL|LANDSAT|TIROS/.test(n)) return 'weather';
+  return 'other';
+}
 
 // ADS-B emitter "category" (wake-turbulence class) code -> readable label.
 const WAKE_CATEGORY = {
@@ -461,15 +512,17 @@ export async function fetchLiveEonet() {
         const latest = geom[geom.length - 1] || geom[0];
         const coords = pointOf(latest);
         if (!coords) return null;
+        const category = ev.categories?.[0]?.title || 'Event';
         return {
           id: ev.id,
           lat: coords[1],
           lng: coords[0],
           label: ev.title || 'Natural Event',
           layer: 'eonet',
+          kind: classifyEonet(category), // read by MapView to pick the event icon
           meta: {
             event: ev.title || '—',
-            category: ev.categories?.[0]?.title || 'Event',
+            category,
             magnitude:
               latest?.magnitudeValue != null
                 ? `${latest.magnitudeValue} ${latest.magnitudeUnit || ''}`.trim()
@@ -579,15 +632,18 @@ export function tleToEntities(text, now = new Date()) {
           ? Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
           : null;
 
+      const kind = classifySatellite(name);
       out.push({
         id: String(satrec.satnum),
         lat,
         lng,
         label: name,
         layer: 'satellites',
+        kind, // read by MapView to color the icon (kept out of the sidebar)
         altitude_km: Math.round(gd.height), // read by MapView for orbit lift
         meta: {
           name,
+          type: SAT_TYPE_LABEL[kind],
           norad_id: String(satrec.satnum),
           altitude_km: Math.round(gd.height),
           altitude_mi: Number((gd.height * 0.621371).toFixed(2)), // km -> miles (0.00)

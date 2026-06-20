@@ -148,7 +148,8 @@ export const LAYER_REGISTRY = [
     type: 'markers',
     defaultActive: false,
     color: '#fb923c',
-    description: 'Live tracking of severe storms, wildfires, and volcanoes.',
+    description:
+      'Worldwide wildfires, volcanoes, severe storms, floods & ice — iconified by type, hotter colors for higher-danger categories (NASA EONET).',
     sourceUrl: 'https://eonet.gsfc.nasa.gov/',
     sourceLabel: 'NASA EONET',
   },
@@ -161,6 +162,11 @@ export const LAYER_REGISTRY = [
     defaultActive: false,
     color: '#22d3ee',
     description: 'Animated global surface-current flow (NOAA RTOFS via Open-Meteo Marine).',
+    // Honest caveat: the field is a deliberately coarse 18×7 grid (rate budget,
+    // see currentsData.js) and falls back to a SYNTHETIC gyre when the feed is
+    // down, so the flow is illustrative, not navigation-grade. A plain note is
+    // the simplest persistent "work in progress" signal (renders amber, always).
+    note: '⚠ Experimental — coarse, illustrative flow; not navigation-grade.',
     sourceUrl: 'https://polar.ncep.noaa.gov/global/',
     sourceLabel: 'NOAA RTOFS',
   },
@@ -184,7 +190,12 @@ export const LAYER_REGISTRY = [
     type: 'points',
     defaultActive: false,
     color: '#a78bfa',
-    description: 'Live orbital positions calculated from CelesTrak TLEs.',
+    description:
+      'Live orbital positions from CelesTrak TLEs, colored by type (Starlink, OneWeb, GNSS, weather, stations).',
+    // Rendering all 11k+ tracked objects every refresh hitches the main thread
+    // (see SAT_LIMIT in globalStreams.js), so we show a live sample; the
+    // CelesTrak source link below reaches the full catalog.
+    note: 'Live sample of ~2,000 of 11k+ tracked objects — full set at CelesTrak (Details).',
     sourceUrl: 'https://celestrak.org/',
     sourceLabel: 'CelesTrak',
   },

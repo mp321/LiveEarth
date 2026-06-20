@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { looksLikeTle, tleToEntities } from '../src/services/globalStreams';
+import {
+  classifyEonet,
+  classifySatellite,
+  looksLikeTle,
+  tleToEntities,
+} from '../src/services/globalStreams';
 
 // Canonical ISS element set (the satellite.js README example). Epoch is 2019
 // day 156.509 ≈ 2019-06-05 12:13 UTC; propagation is evaluated at that moment
@@ -34,6 +39,10 @@ describe('tleToEntities', () => {
     expect(sat.meta.norad_id).toBe('25544');
     expect(sat.meta.velocity_kms).toBeGreaterThan(7);
     expect(sat.meta.velocity_kms).toBeLessThan(8);
+    // ISS (ZARYA) classifies as a crewed station; kind drives the icon color,
+    // meta.type is the human-readable label shown in the sidebar.
+    expect(sat.kind).toBe('station');
+    expect(sat.meta.type).toBe('Space station / crewed');
   });
 
   it('skips malformed triples without losing the rest of the catalog', () => {
@@ -47,9 +56,42 @@ describe('tleToEntities', () => {
     expect(tleToEntities(null, EPOCH)).toEqual([]);
   });
 
-  it('caps the catalog at 500 satellites', () => {
-    const big = ISS_TLE.repeat(502);
-    expect(tleToEntities(big, EPOCH)).toHaveLength(500);
+  it('caps the catalog at SAT_LIMIT (2000) satellites', () => {
+    const big = ISS_TLE.repeat(2002);
+    expect(tleToEntities(big, EPOCH)).toHaveLength(2000);
+  });
+});
+
+describe('classifySatellite', () => {
+  it('buckets by name into the type that drives the icon color', () => {
+    expect(classifySatellite('STARLINK-1234')).toBe('starlink');
+    expect(classifySatellite('ONEWEB-0456')).toBe('oneweb');
+    expect(classifySatellite('ISS (ZARYA)')).toBe('station');
+    expect(classifySatellite('GPS BIIF-12 (PRN 32)')).toBe('nav');
+    expect(classifySatellite('NOAA 19')).toBe('weather');
+    expect(classifySatellite('SOME RANDOM COMSAT')).toBe('other');
+  });
+
+  it('is null-safe', () => {
+    expect(classifySatellite('')).toBe('other');
+    expect(classifySatellite(null)).toBe('other');
+  });
+});
+
+describe('classifyEonet', () => {
+  it('maps category titles to event-icon kinds', () => {
+    expect(classifyEonet('Wildfires')).toBe('wildfire');
+    expect(classifyEonet('Volcanoes')).toBe('volcano');
+    expect(classifyEonet('Severe Storms')).toBe('storm');
+    expect(classifyEonet('Floods')).toBe('flood');
+    expect(classifyEonet('Sea and Lake Ice')).toBe('ice');
+    expect(classifyEonet('Dust and Haze')).toBe('dust');
+  });
+
+  it('falls back to the generic event marker for unknown / empty categories', () => {
+    expect(classifyEonet('Manmade')).toBe('event');
+    expect(classifyEonet('')).toBe('event');
+    expect(classifyEonet(null)).toBe('event');
   });
 });
 
