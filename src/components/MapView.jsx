@@ -24,7 +24,8 @@ import {
 import { loadWindData } from '../services/windData';
 import { loadCurrentsData } from '../services/currentsData';
 import { useAppContext } from '../state/AppContext';
-import { INITIAL_VIEW, publishViewState } from '../state/urlState';
+import { currentView, publishViewState } from '../state/urlState';
+import { navigateToGround } from '../ground/route';
 
 const REFRESH_MS = 30_000;
 const RADAR_FRAME_MS = 900;
@@ -242,8 +243,10 @@ export default function MapView() {
   // --- map setup (once) --------------------------------------------------------
   useEffect(() => {
     // Restore the camera from the URL hash / localStorage when present so a
-    // shared link (or reload) reproduces the exact view.
-    const cam = INITIAL_VIEW.camera;
+    // shared link (or reload) reproduces the exact view. currentView() (not the
+    // frozen page-load snapshot) so a remount after returning from Ground View
+    // restores the camera the user actually left.
+    const cam = currentView().camera;
     const map = new maplibregl.Map({
       container: containerRef.current,
       center: cam ? [cam.lng, cam.lat] : DEFAULT_CENTER,
@@ -328,6 +331,14 @@ export default function MapView() {
       const ids = [...interactive.current].filter((id) => map.getLayer(id));
       const hit = ids.length && map.queryRenderedFeatures(e.point, { layers: ids }).length;
       map.getCanvas().style.cursor = hit ? 'pointer' : '';
+    });
+
+    // Right-click hands the clicked point off to Ground View (separate route +
+    // engine; this map unmounts). The globe never knows what the engine does —
+    // it only emits a {lat,lng}. No fetcher/registry coupling.
+    map.on('contextmenu', (e) => {
+      e.preventDefault?.();
+      navigateToGround(e.lngLat.lat, e.lngLat.lng);
     });
 
     return () => {

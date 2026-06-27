@@ -38,6 +38,8 @@ public bundle). See `.env.example` for the template.
 | `OPENSKY_CLIENT_ID` | `api/flights.js` | OpenSky OAuth2 client id (e.g. `you@example.com-api-client`) |
 | `OPENSKY_CLIENT_SECRET` | `api/flights.js` | OpenSky OAuth2 client secret |
 | `OPENAQ_KEY` | `api/airquality.js` | OpenAQ v3 API key (free at explore.openaq.org) |
+| `MAPILLARY_TOKEN` | `api/ground.js` | Mapillary token (`MLY\|…`) for Ground View's server-side nearest-image search |
+| `VITE_MAPILLARY_TOKEN` | MapillaryJS viewer | Same `MLY\|…` token, exposed to the browser so the embedded panorama can load. Optional — without it Ground View falls back to a keyless Google Street View link-out |
 
 Setup:
 
@@ -73,7 +75,16 @@ and its toggle shows a setup note.
   on load the hash wins over localStorage, which wins over defaults.
 - `api/` — Vercel serverless functions: `flights.js` (OpenSky OAuth2 proxy,
   60s shared cache), `tle.js` (CelesTrak proxy, 2h cache, serves stale on
-  rate-limit), `airquality.js` (OpenAQ proxy holding the key server-side).
+  rate-limit), `airquality.js` (OpenAQ proxy holding the key server-side),
+  `ground.js` (Mapillary nearest-image search holding the token server-side).
+- `src/ground/` — **Ground View**, a deliberately separate engine on a separate
+  route (`#ground?lat=&lng=`), outside the layer-registry contract. Selecting a
+  point on the globe (entity sidebar button or right-click) hands off a
+  `{lat,lng}`; the MapLibre globe **unmounts** and a self-contained street-level
+  panorama viewer takes over. `engines/` is a small swappable adapter (Mapillary
+  today); `GroundView.jsx` is the route page; `route.js` is the hash router.
+  Falls back to a keyless Google Street View link-out where there's no coverage
+  (or no browser viewer token).
 
 ## Data sources
 

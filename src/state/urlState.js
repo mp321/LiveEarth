@@ -92,6 +92,18 @@ export const INITIAL_VIEW = readInitialView();
 let view = { ...INITIAL_VIEW };
 let timer = null;
 
+// True when a non-globe route (e.g. Ground View's #ground?lat=&lng=) currently
+// owns the hash. The globe view stays mirrored to localStorage regardless, so
+// returning to the globe still restores it — we just must not stomp the route's
+// hash while it's open (which would break reload/share of that route).
+function onForeignRoute() {
+  try {
+    return window.location.hash.replace(/^#/, '').startsWith('ground');
+  } catch {
+    return false;
+  }
+}
+
 function write() {
   // Built by hand instead of URLSearchParams.toString() so the layer-list
   // commas stay readable in the address bar (values are ids and numbers —
@@ -102,8 +114,11 @@ function write() {
   if (view.camera) parts.push(`cam=${formatCamera(view.camera)}`);
   try {
     // replaceState (not location.hash) avoids spamming the back button with
-    // one history entry per pan.
-    window.history.replaceState(null, '', `#${parts.join('&')}`);
+    // one history entry per pan. Skip the hash write entirely while a foreign
+    // route owns it, so a globe publish can't clobber e.g. #ground.
+    if (!onForeignRoute()) {
+      window.history.replaceState(null, '', `#${parts.join('&')}`);
+    }
   } catch {
     /* sandboxed / unsupported — localStorage below still persists */
   }
@@ -112,6 +127,16 @@ function write() {
   } catch {
     /* quota exceeded / private mode */
   }
+}
+
+/**
+ * The live merged view ({ layers, base, camera }). Unlike INITIAL_VIEW (a frozen
+ * page-load snapshot) this reflects every publish, so a component that remounts
+ * mid-session — e.g. MapView when returning from Ground View — can restore the
+ * camera the user actually left, not the one from page load.
+ */
+export function currentView() {
+  return { ...view };
 }
 
 /**

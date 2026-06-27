@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { LAYER_BY_ID } from '../state/layerRegistry';
 import { useAppContext } from '../state/AppContext';
 import { sourceLinkForEntity } from '../services/sourceLinks';
+import { navigateToGround } from '../ground/route';
 import TideStrip from './TideStrip';
 
 // -----------------------------------------------------------------------------
@@ -197,6 +198,18 @@ export default function TelemetrySidebar() {
                     Search ↗
                   </a>
                 </div>
+              )}
+              {/* Hand off this point to Ground View (a separate route + engine;
+                  the globe unmounts). Just a {lat,lng} navigation — no fetcher
+                  or layer-registry coupling. */}
+              {hasCoords && (
+                <button
+                  type="button"
+                  onClick={() => navigateToGround(lat, lng)}
+                  className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center text-[11px] font-medium text-slate-100 transition-colors hover:bg-white/10"
+                >
+                  Ground view here →
+                </button>
               )}
             </section>
 
